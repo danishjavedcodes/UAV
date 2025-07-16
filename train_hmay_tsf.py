@@ -39,6 +39,7 @@ class HMAYTSFTrainer:
         # CSV logging setup
         self.csv_log_path = None
         self.training_metrics = []
+        self.current_epoch = 0
         
     def setup_csv_logging(self, save_dir):
         """Setup CSV logging for training metrics"""
@@ -117,15 +118,31 @@ class HMAYTSFTrainer:
     def on_epoch_end(self, validator):
         """Callback function called at the end of each epoch"""
         try:
-            # Get current epoch from the validator's trainer
-            epoch = getattr(validator.trainer, 'epoch', 0) + 1
+            # Debug: Print validator attributes to understand structure
+            # print(f"Validator type: {type(validator)}")
+            # print(f"Validator attributes: {dir(validator)}")
             
-            # Extract metrics from validator
+            # Increment our internal epoch counter
+            self.current_epoch += 1
+            epoch = self.current_epoch
+            
+            # Extract metrics
             metrics = {}
             metrics['epoch'] = epoch
             
-            # Get metrics from validator.metrics if available
-            if hasattr(validator, 'metrics') and validator.metrics:
+            # Initialize with default values
+            metrics['val_precision'] = 0.0
+            metrics['val_recall'] = 0.0
+            metrics['map50'] = 0.0
+            metrics['map50_95'] = 0.0
+            metrics['val_f1'] = 0.0
+            metrics['val_accuracy'] = 0.0
+            metrics['train_loss'] = 0.0
+            metrics['val_loss'] = 0.0
+            metrics['lr'] = 0.001
+            
+            # Try to get metrics from validator
+            if hasattr(validator, 'metrics') and validator.metrics is not None:
                 # Extract validation metrics
                 metrics['val_precision'] = validator.metrics.get('metrics/precision(B)', 0.0)
                 metrics['val_recall'] = validator.metrics.get('metrics/recall(B)', 0.0)
@@ -137,37 +154,35 @@ class HMAYTSFTrainer:
                 recall = metrics['val_recall']
                 if precision + recall > 0:
                     metrics['val_f1'] = 2 * (precision * recall) / (precision + recall)
-                else:
-                    metrics['val_f1'] = 0.0
-                
-                # For object detection, accuracy can be approximated as (precision + recall) / 2
-                metrics['val_accuracy'] = (precision + recall) / 2 if (precision + recall) > 0 else 0.0
+                    metrics['val_accuracy'] = (precision + recall) / 2
             
-            # Get training loss from validator's trainer if available
-            if hasattr(validator, 'trainer'):
-                trainer = validator.trainer
-                
-                # Get training loss
-                if hasattr(trainer, 'tloss'):
-                    metrics['train_loss'] = float(trainer.tloss)
-                elif hasattr(trainer, 'loss'):
-                    loss_val = trainer.loss
-                    metrics['train_loss'] = float(loss_val.item()) if hasattr(loss_val, 'item') else float(loss_val)
-                
-                # Get validation loss
-                if hasattr(trainer, 'vloss'):
-                    metrics['val_loss'] = float(trainer.vloss)
-                
-                # Get learning rate
-                if hasattr(trainer, 'optimizer') and hasattr(trainer.optimizer, 'param_groups'):
-                    metrics['lr'] = trainer.optimizer.param_groups[0]['lr']
+            # Try to get additional metrics from validator results
+            if hasattr(validator, 'results') and validator.results is not None:
+                # validator.results might contain additional information
+                results = validator.results
+                if hasattr(results, 'box'):
+                    box_results = results.box
+                    if hasattr(box_results, 'mp'):
+                        metrics['val_precision'] = float(box_results.mp)
+                    if hasattr(box_results, 'mr'):
+                        metrics['val_recall'] = float(box_results.mr)
+                    if hasattr(box_results, 'map50'):
+                        metrics['map50'] = float(box_results.map50)
+                    if hasattr(box_results, 'map'):
+                        metrics['map50_95'] = float(box_results.map)
+                    
+                    # Recalculate F1 and accuracy with updated values
+                    precision = metrics['val_precision']
+                    recall = metrics['val_recall']
+                    if precision + recall > 0:
+                        metrics['val_f1'] = 2 * (precision * recall) / (precision + recall)
+                        metrics['val_accuracy'] = (precision + recall) / 2
             
-            # For training metrics, we'll use validation metrics as approximation
-            # since YOLOv8 doesn't easily separate train/val precision/recall
-            metrics['train_precision'] = metrics.get('val_precision', 0.0)
-            metrics['train_recall'] = metrics.get('val_recall', 0.0)
-            metrics['train_f1'] = metrics.get('val_f1', 0.0)
-            metrics['train_accuracy'] = metrics.get('val_accuracy', 0.0)
+            # For training metrics, use validation metrics as approximation
+            metrics['train_precision'] = metrics['val_precision']
+            metrics['train_recall'] = metrics['val_recall']
+            metrics['train_f1'] = metrics['val_f1']
+            metrics['train_accuracy'] = metrics['val_accuracy']
             
             # Log to CSV
             self.log_metrics_to_csv(metrics)
@@ -210,6 +225,9 @@ class HMAYTSFTrainer:
         # Setup CSV logging
         self.setup_csv_logging(full_save_dir)
         
+        # Reset epoch counter for this training session
+        self.current_epoch = 0
+
         # Enhanced training arguments for UAV object detection
         train_args = {
             'data': data_yaml,
@@ -268,8 +286,15 @@ class HMAYTSFTrainer:
             """Wrapper for epoch callback"""
             self.on_epoch_end(validator)
         
-        # Add the callback to the model
+        def train_epoch_callback(trainer):
+            """Alternative callback from trainer"""
+            # This gets called from the trainer directly
+            if hasattr(trainer, 'epoch'):
+                self.current_epoch = trainer.epoch + 1
+        
+        # Add multiple callbacks to ensure we capture metrics
         self.model.add_callback('on_val_end', epoch_callback)
+        self.model.add_callback('on_train_epoch_end', train_epoch_callback)
         
         print("Starting training...")
         print(f"CSV logging will be saved to: {self.csv_log_path}")
