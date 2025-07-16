@@ -118,10 +118,6 @@ class HMAYTSFTrainer:
     def on_epoch_end(self, validator):
         """Callback function called at the end of each epoch"""
         try:
-            # Debug: Print validator attributes to understand structure
-            # print(f"Validator type: {type(validator)}")
-            # print(f"Validator attributes: {dir(validator)}")
-            
             # Increment our internal epoch counter
             self.current_epoch += 1
             epoch = self.current_epoch
@@ -141,37 +137,44 @@ class HMAYTSFTrainer:
             metrics['val_loss'] = 0.0
             metrics['lr'] = 0.001
             
-            # Try to get metrics from validator
+            # Try to get metrics from validator.metrics.box (DetMetrics object)
             if hasattr(validator, 'metrics') and validator.metrics is not None:
-                # Extract validation metrics
-                metrics['val_precision'] = validator.metrics.get('metrics/precision(B)', 0.0)
-                metrics['val_recall'] = validator.metrics.get('metrics/recall(B)', 0.0)
-                metrics['map50'] = validator.metrics.get('metrics/mAP50(B)', 0.0)
-                metrics['map50_95'] = validator.metrics.get('metrics/mAP50-95(B)', 0.0)
-                
-                # Calculate F1 and accuracy from precision and recall
-                precision = metrics['val_precision']
-                recall = metrics['val_recall']
-                if precision + recall > 0:
-                    metrics['val_f1'] = 2 * (precision * recall) / (precision + recall)
-                    metrics['val_accuracy'] = (precision + recall) / 2
+                det_metrics = validator.metrics
+                if hasattr(det_metrics, 'box') and det_metrics.box is not None:
+                    box_metrics = det_metrics.box
+                    # Access metrics from the box object
+                    if hasattr(box_metrics, 'mp'):
+                        metrics['val_precision'] = float(box_metrics.mp)
+                    if hasattr(box_metrics, 'mr'):
+                        metrics['val_recall'] = float(box_metrics.mr)
+                    if hasattr(box_metrics, 'map50'):
+                        metrics['map50'] = float(box_metrics.map50)
+                    if hasattr(box_metrics, 'map'):
+                        metrics['map50_95'] = float(box_metrics.map)
+                    
+                    # Calculate F1 and accuracy from precision and recall
+                    precision = metrics['val_precision']
+                    recall = metrics['val_recall']
+                    if precision + recall > 0:
+                        metrics['val_f1'] = 2 * (precision * recall) / (precision + recall)
+                        metrics['val_accuracy'] = (precision + recall) / 2
             
-            # Try to get additional metrics from validator results
+            # Try to get additional metrics from validator results as fallback
             if hasattr(validator, 'results') and validator.results is not None:
-                # validator.results might contain additional information
                 results = validator.results
                 if hasattr(results, 'box'):
                     box_results = results.box
-                    if hasattr(box_results, 'mp'):
+                    # Use results as fallback if metrics weren't found above
+                    if metrics['val_precision'] == 0.0 and hasattr(box_results, 'mp'):
                         metrics['val_precision'] = float(box_results.mp)
-                    if hasattr(box_results, 'mr'):
+                    if metrics['val_recall'] == 0.0 and hasattr(box_results, 'mr'):
                         metrics['val_recall'] = float(box_results.mr)
-                    if hasattr(box_results, 'map50'):
+                    if metrics['map50'] == 0.0 and hasattr(box_results, 'map50'):
                         metrics['map50'] = float(box_results.map50)
-                    if hasattr(box_results, 'map'):
+                    if metrics['map50_95'] == 0.0 and hasattr(box_results, 'map'):
                         metrics['map50_95'] = float(box_results.map)
                     
-                    # Recalculate F1 and accuracy with updated values
+                    # Recalculate F1 and accuracy if we got new values
                     precision = metrics['val_precision']
                     recall = metrics['val_recall']
                     if precision + recall > 0:
