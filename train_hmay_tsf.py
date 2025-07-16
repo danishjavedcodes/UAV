@@ -140,16 +140,19 @@ class HMAYTSFTrainer:
             # Try to get metrics from validator.metrics.box (DetMetrics object)
             if hasattr(validator, 'metrics') and validator.metrics is not None:
                 det_metrics = validator.metrics
+                
+                # Access the box metrics (Metric object)
                 if hasattr(det_metrics, 'box') and det_metrics.box is not None:
                     box_metrics = det_metrics.box
-                    # Access metrics from the box object
-                    if hasattr(box_metrics, 'mp'):
+                    
+                    # Extract metrics from box object
+                    if hasattr(box_metrics, 'mp'):  # mean precision
                         metrics['val_precision'] = float(box_metrics.mp)
-                    if hasattr(box_metrics, 'mr'):
+                    if hasattr(box_metrics, 'mr'):  # mean recall
                         metrics['val_recall'] = float(box_metrics.mr)
-                    if hasattr(box_metrics, 'map50'):
+                    if hasattr(box_metrics, 'map50'):  # mAP at IoU=0.5
                         metrics['map50'] = float(box_metrics.map50)
-                    if hasattr(box_metrics, 'map'):
+                    if hasattr(box_metrics, 'map'):  # mAP at IoU=0.5:0.95
                         metrics['map50_95'] = float(box_metrics.map)
                     
                     # Calculate F1 and accuracy from precision and recall
@@ -159,22 +162,21 @@ class HMAYTSFTrainer:
                         metrics['val_f1'] = 2 * (precision * recall) / (precision + recall)
                         metrics['val_accuracy'] = (precision + recall) / 2
             
-            # Try to get additional metrics from validator results as fallback
+            # Try alternative access through validator.results if available
             if hasattr(validator, 'results') and validator.results is not None:
                 results = validator.results
                 if hasattr(results, 'box'):
                     box_results = results.box
-                    # Use results as fallback if metrics weren't found above
-                    if metrics['val_precision'] == 0.0 and hasattr(box_results, 'mp'):
+                    if hasattr(box_results, 'mp'):
                         metrics['val_precision'] = float(box_results.mp)
-                    if metrics['val_recall'] == 0.0 and hasattr(box_results, 'mr'):
+                    if hasattr(box_results, 'mr'):
                         metrics['val_recall'] = float(box_results.mr)
-                    if metrics['map50'] == 0.0 and hasattr(box_results, 'map50'):
+                    if hasattr(box_results, 'map50'):
                         metrics['map50'] = float(box_results.map50)
-                    if metrics['map50_95'] == 0.0 and hasattr(box_results, 'map'):
+                    if hasattr(box_results, 'map'):
                         metrics['map50_95'] = float(box_results.map)
                     
-                    # Recalculate F1 and accuracy if we got new values
+                    # Recalculate F1 and accuracy with updated values
                     precision = metrics['val_precision']
                     recall = metrics['val_recall']
                     if precision + recall > 0:
