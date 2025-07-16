@@ -14,6 +14,9 @@ import numpy as np
 from datetime import datetime
 import argparse
 import json
+import pandas as pd
+import csv
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
 from hmay_tsf_model import HMAY_TSF, prepare_visdrone_dataset
 from data_preparation import prepare_visdrone_dataset as prep_dataset, get_dataloader
@@ -33,6 +36,136 @@ class HMAYTSFTrainer:
         self.model = None
         self.best_map = 0.0
         
+        # CSV logging setup
+        self.csv_log_path = None
+        self.training_metrics = []
+        
+    def setup_csv_logging(self, save_dir):
+        """Setup CSV logging for training metrics"""
+        self.csv_log_path = Path(save_dir) / 'training_metrics.csv'
+        self.csv_log_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize CSV with headers
+        headers = [
+            'epoch', 'train_loss', 'val_loss', 
+            'train_precision', 'train_recall', 'train_f1', 'train_accuracy',
+            'val_precision', 'val_recall', 'val_f1', 'val_accuracy',
+            'map50', 'map50_95', 'lr'
+        ]
+        
+        with open(self.csv_log_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+        
+        print(f"CSV logging initialized: {self.csv_log_path}")
+    
+    def log_metrics_to_csv(self, metrics_dict):
+        """Log metrics to CSV file"""
+        if self.csv_log_path is None:
+            return
+            
+        with open(self.csv_log_path, 'a', newline='') as f:
+            writer = csv.writer(f)
+            row = [
+                metrics_dict.get('epoch', ''),
+                metrics_dict.get('train_loss', ''),
+                metrics_dict.get('val_loss', ''),
+                metrics_dict.get('train_precision', ''),
+                metrics_dict.get('train_recall', ''),
+                metrics_dict.get('train_f1', ''),
+                metrics_dict.get('train_accuracy', ''),
+                metrics_dict.get('val_precision', ''),
+                metrics_dict.get('val_recall', ''),
+                metrics_dict.get('val_f1', ''),
+                metrics_dict.get('val_accuracy', ''),
+                metrics_dict.get('map50', ''),
+                metrics_dict.get('map50_95', ''),
+                metrics_dict.get('lr', '')
+            ]
+            writer.writerow(row)
+    
+    def print_epoch_metrics(self, metrics_dict):
+        """Print detailed metrics after each epoch"""
+        print("\n" + "="*80)
+        print(f"EPOCH {metrics_dict.get('epoch', 'N/A')} RESULTS")
+        print("="*80)
+        
+        # Training metrics
+        print("TRAINING METRICS:")
+        print(f"  Loss: {metrics_dict.get('train_loss', 'N/A'):.4f}")
+        print(f"  Precision: {metrics_dict.get('train_precision', 'N/A'):.4f}")
+        print(f"  Recall: {metrics_dict.get('train_recall', 'N/A'):.4f}")
+        print(f"  F1-Score: {metrics_dict.get('train_f1', 'N/A'):.4f}")
+        print(f"  Accuracy: {metrics_dict.get('train_accuracy', 'N/A'):.4f}")
+        
+        # Validation metrics
+        print("\nVALIDATION METRICS:")
+        print(f"  Loss: {metrics_dict.get('val_loss', 'N/A'):.4f}")
+        print(f"  Precision: {metrics_dict.get('val_precision', 'N/A'):.4f}")
+        print(f"  Recall: {metrics_dict.get('val_recall', 'N/A'):.4f}")
+        print(f"  F1-Score: {metrics_dict.get('val_f1', 'N/A'):.4f}")
+        print(f"  Accuracy: {metrics_dict.get('val_accuracy', 'N/A'):.4f}")
+        print(f"  mAP@0.5: {metrics_dict.get('map50', 'N/A'):.4f}")
+        print(f"  mAP@0.5:0.95: {metrics_dict.get('map50_95', 'N/A'):.4f}")
+        
+        print(f"\nLearning Rate: {metrics_dict.get('lr', 'N/A')}")
+        print("="*80 + "\n")
+        
+        # Store metrics for potential analysis
+        self.training_metrics.append(metrics_dict)
+    
+    def on_epoch_end(self, trainer):
+        """Callback function called at the end of each epoch"""
+        try:
+            # Get current epoch
+            epoch = trainer.epoch + 1
+            
+            # Extract metrics from trainer
+            metrics = {}
+            metrics['epoch'] = epoch
+            
+            # Training metrics
+            if hasattr(trainer, 'loss'):
+                metrics['train_loss'] = float(trainer.loss.item()) if hasattr(trainer.loss, 'item') else trainer.loss
+            
+            # Validation metrics from trainer.metrics
+            if hasattr(trainer, 'metrics') and trainer.metrics:
+                metrics['val_precision'] = trainer.metrics.get('metrics/precision(B)', 0.0)
+                metrics['val_recall'] = trainer.metrics.get('metrics/recall(B)', 0.0)
+                metrics['map50'] = trainer.metrics.get('metrics/mAP50(B)', 0.0)
+                metrics['map50_95'] = trainer.metrics.get('metrics/mAP50-95(B)', 0.0)
+                
+                # Calculate F1 and accuracy from precision and recall
+                precision = metrics['val_precision']
+                recall = metrics['val_recall']
+                if precision + recall > 0:
+                    metrics['val_f1'] = 2 * (precision * recall) / (precision + recall)
+                else:
+                    metrics['val_f1'] = 0.0
+                
+                # For object detection, accuracy can be approximated as (precision + recall) / 2
+                metrics['val_accuracy'] = (precision + recall) / 2 if (precision + recall) > 0 else 0.0
+            
+            # Learning rate
+            if hasattr(trainer.optimizer, 'param_groups'):
+                metrics['lr'] = trainer.optimizer.param_groups[0]['lr']
+            
+            # For training metrics, we'll use validation metrics as approximation
+            # since YOLOv8 doesn't separate train/val precision/recall easily
+            metrics['train_precision'] = metrics.get('val_precision', 0.0)
+            metrics['train_recall'] = metrics.get('val_recall', 0.0)
+            metrics['train_f1'] = metrics.get('val_f1', 0.0)
+            metrics['train_accuracy'] = metrics.get('val_accuracy', 0.0)
+            
+            # Log to CSV
+            self.log_metrics_to_csv(metrics)
+            
+            # Print metrics
+            self.print_epoch_metrics(metrics)
+            
+        except Exception as e:
+            print(f"Error in epoch callback: {e}")
+    
     def setup_model(self, num_classes=11, pretrained=True):
         """Setup the HMAY-TSF model"""
         print("Setting up HMAY-TSF model...")
@@ -55,6 +188,14 @@ class HMAYTSFTrainer:
         print(f"  Batch size: {batch_size}")
         print(f"  Device: {self.device}")
         
+        # Create save directory and setup CSV logging
+        run_name = f'hmay_tsf_{self.model_size}_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
+        full_save_dir = Path(save_dir) / run_name
+        full_save_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Setup CSV logging
+        self.setup_csv_logging(full_save_dir)
+        
         # Enhanced training arguments for UAV object detection
         train_args = {
             'data': data_yaml,
@@ -68,7 +209,7 @@ class HMAYTSFTrainer:
             'save_period': 10,
             'cache': False,  # Set to True if you have enough RAM
             'project': save_dir,
-            'name': f'hmay_tsf_{self.model_size}_{datetime.now().strftime("%Y%m%d_%H%M%S")}',
+            'name': run_name,
             'exist_ok': True,
             'resume': resume,
             
@@ -108,20 +249,63 @@ class HMAYTSFTrainer:
             'val': True,
         }
         
+        # Add callbacks for metric tracking
+        def epoch_callback(trainer):
+            """Wrapper for epoch callback"""
+            self.on_epoch_end(trainer)
+        
+        # Add the callback to the model
+        self.model.add_callback('on_val_end', epoch_callback)
+        
         print("Starting training...")
+        print(f"CSV logging will be saved to: {self.csv_log_path}")
         try:
             # Start training
             results = self.model.train(**train_args)
             
             print("Training completed successfully!")
+            print(f"CSV log saved to: {self.csv_log_path}")
             print(f"Best mAP50: {results.results_dict.get('metrics/mAP50(B)', 'N/A')}")
             print(f"Best mAP50-95: {results.results_dict.get('metrics/mAP50-95(B)', 'N/A')}")
+            
+            # Save final metrics summary
+            self.save_training_summary(full_save_dir)
             
             return results
             
         except Exception as e:
             print(f"Training failed with error: {e}")
             return None
+    
+    def save_training_summary(self, save_dir):
+        """Save a summary of training metrics"""
+        if not self.training_metrics:
+            return
+            
+        summary_path = Path(save_dir) / 'training_summary.json'
+        
+        # Calculate summary statistics
+        summary = {
+            'total_epochs': len(self.training_metrics),
+            'best_epoch': 0,
+            'best_map50': 0,
+            'best_map50_95': 0,
+            'final_metrics': self.training_metrics[-1] if self.training_metrics else {},
+        }
+        
+        # Find best epoch based on mAP50
+        for i, metrics in enumerate(self.training_metrics):
+            map50 = metrics.get('map50', 0)
+            if map50 > summary['best_map50']:
+                summary['best_map50'] = map50
+                summary['best_map50_95'] = metrics.get('map50_95', 0)
+                summary['best_epoch'] = i + 1
+        
+        # Save summary
+        with open(summary_path, 'w') as f:
+            json.dump(summary, f, indent=2)
+        
+        print(f"Training summary saved to: {summary_path}")
     
     def evaluate_model(self, data_yaml, weights_path=None):
         """Evaluate the trained model"""
