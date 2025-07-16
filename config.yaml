@@ -1,0 +1,105 @@
+# HMAY-TSF Configuration File
+# Adjust these parameters based on your requirements and hardware
+
+# Model Configuration
+model:
+  size: 's'  # n, s, m, l, x (nano, small, medium, large, extra-large)
+  num_classes: 11
+  pretrained: true
+
+# Training Configuration
+training:
+  epochs: 100
+  batch_size: 16
+  img_size: 640
+  device: 'auto'  # auto, cpu, cuda, 0, 1, etc.
+  workers: 8
+  patience: 50
+  
+  # Optimization
+  optimizer: 'AdamW'
+  lr0: 0.001
+  lrf: 0.01
+  momentum: 0.937
+  weight_decay: 0.0005
+  warmup_epochs: 3
+  warmup_momentum: 0.8
+  warmup_bias_lr: 0.1
+  
+  # Loss weights (important for small objects)
+  box_loss_weight: 7.5
+  cls_loss_weight: 0.5
+  dfl_loss_weight: 1.5
+
+# Data Augmentation
+augmentation:
+  # HSV augmentation
+  hsv_h: 0.015
+  hsv_s: 0.7
+  hsv_v: 0.4
+  
+  # Geometric augmentation
+  degrees: 0.373
+  translate: 0.245
+  scale: 0.898
+  shear: 0.602
+  perspective: 0.0
+  flipud: 0.00856
+  fliplr: 0.5
+  
+  # Advanced augmentation
+  mosaic: 1.0
+  mixup: 0.243
+  copy_paste: 0.362
+
+# Dataset Configuration
+dataset:
+  path: './dataset'
+  train: 'images/train'
+  val: 'images/val'
+  test: 'images/test'
+  cache: false  # Set to true if you have enough RAM
+  
+# Evaluation Configuration
+evaluation:
+  conf_threshold: 0.25
+  iou_threshold: 0.45
+  max_detections: 300
+  
+  # Custom metrics
+  small_object_threshold: 0.05  # Area threshold for small objects
+  occlusion_thresholds:
+    light: 0.05
+    medium: 0.1
+
+# Performance Targets
+targets:
+  map50: 0.40      # mAP@0.5
+  map50_95: 0.25   # mAP@0.5:0.95
+  fps: 40          # Frames per second
+  small_object_recall: 0.35
+
+# Hardware Configuration
+hardware:
+  # Memory optimization
+  amp: true        # Automatic mixed precision
+  cache_images: false
+  
+  # For edge deployment
+  quantization: false
+  tensorrt: false
+  
+# Paths
+paths:
+  weights_dir: './runs/train'
+  results_dir: './runs/predict'
+  logs_dir: './logs'
+
+# Methodology Implementation Flags
+methodology:
+  use_conditional_conv: true
+  use_temporal_fusion: true
+  use_super_resolution: false  # Disabled for faster training
+  use_active_learning: false   # Can be enabled for large datasets
+  use_bifpn: true
+  use_spp_csp: true 
