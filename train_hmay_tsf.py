@@ -114,26 +114,23 @@ class HMAYTSFTrainer:
         # Store metrics for potential analysis
         self.training_metrics.append(metrics_dict)
     
-    def on_epoch_end(self, trainer):
+    def on_epoch_end(self, validator):
         """Callback function called at the end of each epoch"""
         try:
-            # Get current epoch
-            epoch = trainer.epoch + 1
+            # Get current epoch from the validator's trainer
+            epoch = getattr(validator.trainer, 'epoch', 0) + 1
             
-            # Extract metrics from trainer
+            # Extract metrics from validator
             metrics = {}
             metrics['epoch'] = epoch
             
-            # Training metrics
-            if hasattr(trainer, 'loss'):
-                metrics['train_loss'] = float(trainer.loss.item()) if hasattr(trainer.loss, 'item') else trainer.loss
-            
-            # Validation metrics from trainer.metrics
-            if hasattr(trainer, 'metrics') and trainer.metrics:
-                metrics['val_precision'] = trainer.metrics.get('metrics/precision(B)', 0.0)
-                metrics['val_recall'] = trainer.metrics.get('metrics/recall(B)', 0.0)
-                metrics['map50'] = trainer.metrics.get('metrics/mAP50(B)', 0.0)
-                metrics['map50_95'] = trainer.metrics.get('metrics/mAP50-95(B)', 0.0)
+            # Get metrics from validator.metrics if available
+            if hasattr(validator, 'metrics') and validator.metrics:
+                # Extract validation metrics
+                metrics['val_precision'] = validator.metrics.get('metrics/precision(B)', 0.0)
+                metrics['val_recall'] = validator.metrics.get('metrics/recall(B)', 0.0)
+                metrics['map50'] = validator.metrics.get('metrics/mAP50(B)', 0.0)
+                metrics['map50_95'] = validator.metrics.get('metrics/mAP50-95(B)', 0.0)
                 
                 # Calculate F1 and accuracy from precision and recall
                 precision = metrics['val_precision']
@@ -146,12 +143,27 @@ class HMAYTSFTrainer:
                 # For object detection, accuracy can be approximated as (precision + recall) / 2
                 metrics['val_accuracy'] = (precision + recall) / 2 if (precision + recall) > 0 else 0.0
             
-            # Learning rate
-            if hasattr(trainer.optimizer, 'param_groups'):
-                metrics['lr'] = trainer.optimizer.param_groups[0]['lr']
+            # Get training loss from validator's trainer if available
+            if hasattr(validator, 'trainer'):
+                trainer = validator.trainer
+                
+                # Get training loss
+                if hasattr(trainer, 'tloss'):
+                    metrics['train_loss'] = float(trainer.tloss)
+                elif hasattr(trainer, 'loss'):
+                    loss_val = trainer.loss
+                    metrics['train_loss'] = float(loss_val.item()) if hasattr(loss_val, 'item') else float(loss_val)
+                
+                # Get validation loss
+                if hasattr(trainer, 'vloss'):
+                    metrics['val_loss'] = float(trainer.vloss)
+                
+                # Get learning rate
+                if hasattr(trainer, 'optimizer') and hasattr(trainer.optimizer, 'param_groups'):
+                    metrics['lr'] = trainer.optimizer.param_groups[0]['lr']
             
             # For training metrics, we'll use validation metrics as approximation
-            # since YOLOv8 doesn't separate train/val precision/recall easily
+            # since YOLOv8 doesn't easily separate train/val precision/recall
             metrics['train_precision'] = metrics.get('val_precision', 0.0)
             metrics['train_recall'] = metrics.get('val_recall', 0.0)
             metrics['train_f1'] = metrics.get('val_f1', 0.0)
@@ -165,6 +177,8 @@ class HMAYTSFTrainer:
             
         except Exception as e:
             print(f"Error in epoch callback: {e}")
+            import traceback
+            traceback.print_exc()
     
     def setup_model(self, num_classes=11, pretrained=True):
         """Setup the HMAY-TSF model"""
@@ -250,9 +264,9 @@ class HMAYTSFTrainer:
         }
         
         # Add callbacks for metric tracking
-        def epoch_callback(trainer):
+        def epoch_callback(validator):
             """Wrapper for epoch callback"""
-            self.on_epoch_end(trainer)
+            self.on_epoch_end(validator)
         
         # Add the callback to the model
         self.model.add_callback('on_val_end', epoch_callback)
