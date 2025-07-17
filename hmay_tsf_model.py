@@ -125,15 +125,15 @@ class EnhancedBiFPN_Layer(nn.Module):
         
     def forward(self, p3, p4, p5):
         for layer in self.bifpn_layers:
-            # Top-down pathway
+        # Top-down pathway
             w1 = F.relu(layer['weight1'])
-            w1 = w1 / (w1.sum() + self.epsilon)
+        w1 = w1 / (w1.sum() + self.epsilon)
             p4_td = layer['conv1'](w1[0] * p4 + w1[1] * F.interpolate(p5, size=p4.shape[-2:], mode='nearest'))
-            
+        
             w2 = F.relu(layer['weight2'])
-            w2 = w2 / (w2.sum() + self.epsilon)
+        w2 = w2 / (w2.sum() + self.epsilon)
             p3_out = layer['conv2'](w2[0] * p3 + w2[1] * F.interpolate(p4_td, size=p3.shape[-2:], mode='nearest'))
-            
+        
             # Bottom-up pathway
             w3 = F.relu(layer['weight3'])
             w3 = w3 / (w3.sum() + self.epsilon)

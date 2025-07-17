@@ -69,7 +69,7 @@ def setup_environment():
     if not config_path.exists():
         print("❌ config.yaml not found!")
         return None
-    
+
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
     
@@ -277,8 +277,8 @@ def main():
         
         if not eval_model_path:
             print("❌ No model path provided for evaluation!")
-            return
-        
+        return
+    
         metrics = run_enhanced_evaluation(eval_model_path, config, args)
     
     # Print performance summary

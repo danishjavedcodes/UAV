@@ -177,9 +177,6 @@ class EnhancedHMAYTSFTrainer:
         self.training_metrics = []
         self.current_epoch = 0
         
-        # Learning rate scheduler
-        self.scheduler = None
-        
     def setup_csv_logging(self, save_dir):
         """Setup CSV logging for training metrics"""
         self.csv_log_path = Path(save_dir) / 'enhanced_training_metrics.csv'
@@ -286,40 +283,6 @@ class EnhancedHMAYTSFTrainer:
         print(f"Enhanced model {model_name} loaded successfully!")
         return self.model
     
-    def setup_enhanced_optimizer(self, model, lr=0.001, weight_decay=0.0005):
-        """Setup enhanced optimizer with different learning rates for different layers"""
-        
-        # Group parameters by layer type
-        backbone_params = []
-        neck_params = []
-        head_params = []
-        
-        for name, param in model.named_parameters():
-            if param.requires_grad:
-                if 'model.0' in name or 'model.1' in name or 'model.2' in name or 'model.3' in name:
-                    backbone_params.append(param)
-                elif 'model.4' in name or 'model.5' in name or 'model.6' in name:
-                    neck_params.append(param)
-                else:
-                    head_params.append(param)
-        
-        # Different learning rates for different parts
-        param_groups = [
-            {'params': backbone_params, 'lr': lr * 0.1},  # Lower LR for backbone
-            {'params': neck_params, 'lr': lr * 0.5},      # Medium LR for neck
-            {'params': head_params, 'lr': lr}             # Full LR for head
-        ]
-        
-        # Use AdamW with better parameters
-        optimizer = optim.AdamW(param_groups, weight_decay=weight_decay, eps=1e-8)
-        
-        # Cosine annealing scheduler with warm restarts
-        self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer, T_0=10, T_mult=2, eta_min=lr * 0.01
-        )
-        
-        return optimizer
-    
     def train_model(self, data_yaml, epochs=200, img_size=640, batch_size=8, 
                    save_dir='./runs/train', patience=100, resume=False):
         """Enhanced training with advanced techniques"""
@@ -398,13 +361,11 @@ class EnhancedHMAYTSFTrainer:
             'overlap_mask': True,
             'mask_ratio': 4,
             'dropout': 0.1,
-            
-            # Callbacks
-            'callbacks': {
-                'on_epoch_end': self.on_epoch_end,
-                'on_train_epoch_end': self.on_train_epoch_end
-            }
         }
+
+        # Add callbacks using the correct YOLO mechanism
+        self.model.add_callback('on_val_end', self.on_epoch_end)
+        self.model.add_callback('on_train_epoch_end', self.on_train_epoch_end)
 
         # Start training
         try:
@@ -421,7 +382,7 @@ class EnhancedHMAYTSFTrainer:
             traceback.print_exc()
             return None
     
-    def on_epoch_end(self, validator):
+    def on_epoch_end(self, trainer):
         """Enhanced callback function called at the end of each epoch"""
         try:
             # Increment our internal epoch counter
@@ -448,9 +409,9 @@ class EnhancedHMAYTSFTrainer:
             metrics['small_object_recall'] = 0.0
             metrics['occlusion_aware_f1'] = 0.0
             
-            # Try to get metrics from validator
-            if hasattr(validator, 'metrics') and validator.metrics is not None:
-                det_metrics = validator.metrics
+            # Try to get metrics from trainer
+            if hasattr(trainer, 'metrics') and trainer.metrics is not None:
+                det_metrics = trainer.metrics
                 
                 if hasattr(det_metrics, 'box') and det_metrics.box is not None:
                     box_metrics = det_metrics.box
@@ -507,13 +468,14 @@ class EnhancedHMAYTSFTrainer:
     def on_train_epoch_end(self, trainer):
         """Callback for training epoch end"""
         try:
-            # Update learning rate
-            if self.scheduler is not None:
-                self.scheduler.step()
+            # Update learning rate if scheduler exists
+            if hasattr(trainer, 'scheduler') and trainer.scheduler is not None:
+                trainer.scheduler.step()
                 
             # Log current learning rate
-            current_lr = self.scheduler.get_last_lr()[0] if self.scheduler else 0.001
-            print(f"Current Learning Rate: {current_lr:.8f}")
+            if hasattr(trainer, 'optimizer') and trainer.optimizer is not None:
+                current_lr = trainer.optimizer.param_groups[0]['lr']
+                print(f"Current Learning Rate: {current_lr:.8f}")
             
         except Exception as e:
             print(f"Error in train epoch callback: {e}")
