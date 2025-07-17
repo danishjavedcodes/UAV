@@ -11,7 +11,7 @@ names:
   9: bus
   10: motor
 nc: 11
-path: D:\UAV_Project\dataset
+path: ./dataset
 test: images/test
 train: images/train
 val: images/val
