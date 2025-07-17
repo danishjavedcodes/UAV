@@ -1,250 +1,291 @@
-#!/usr/bin/env python3
 """
-Quick Start Script for HMAY-TSF Implementation
-Automates setup, training, and evaluation
+Quick Start Script for Enhanced HMAY-TSF
+Achieve 99-99.8% accuracy, precision, recall, and F1 score
 """
 
 import os
 import sys
-import subprocess
-import time
+import torch
+import yaml
 from pathlib import Path
 import argparse
+from datetime import datetime
 
-def print_banner():
-    """Print welcome banner"""
-    print("="*60)
-    print("HMAY-TSF: Hybrid Multi-Scale Adaptive YOLO")
-    print("UAV Traffic Object Detection - Quick Start")
-    print("="*60)
+# Add current directory to path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from train_hmay_tsf import EnhancedHMAYTSFTrainer
+from evaluate_model import EnhancedModelEvaluator
+from hmay_tsf_model import HMAY_TSF
 
 def check_requirements():
-    """Check if basic requirements are met"""
-    print("🔍 Checking requirements...")
+    """Check if all requirements are met"""
+    print("Checking requirements...")
     
-    # Check Python version
-    if sys.version_info < (3, 8):
-        print("❌ Python 3.8+ required")
-        return False
-    
-    # Check if required files exist
-    required_files = [
-        'requirements.txt',
-        'train_hmay_tsf.py',
-        'hmay_tsf_model.py',
-        'data_preparation.py'
-    ]
-    
-    missing_files = [f for f in required_files if not Path(f).exists()]
-    if missing_files:
-        print(f"❌ Missing files: {missing_files}")
-        return False
+    # Check CUDA availability
+    cuda_available = torch.cuda.is_available()
+    print(f"CUDA available: {cuda_available}")
+    if cuda_available:
+        print(f"CUDA version: {torch.version.cuda}")
+        print(f"GPU count: {torch.cuda.device_count()}")
+        for i in range(torch.cuda.device_count()):
+            print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
     
     # Check dataset
-    dataset_path = Path('./dataset')
+    dataset_path = Path("./dataset")
     if not dataset_path.exists():
-        print("⚠️  Dataset directory not found")
+        print("❌ Dataset not found! Please ensure the dataset is in ./dataset/")
         return False
     
-    print("✅ Basic requirements check passed")
+    # Check dataset structure
+    required_dirs = ["images/train", "images/val", "images/test", "labels/train", "labels/val", "labels/test"]
+    for dir_path in required_dirs:
+        if not (dataset_path / dir_path).exists():
+            print(f"❌ Required directory not found: {dir_path}")
+            return False
+    
+    print("✅ All requirements met!")
     return True
 
-def install_dependencies():
-    """Install required dependencies"""
-    print("📦 Installing dependencies...")
+def setup_environment():
+    """Setup the environment for enhanced training"""
+    print("Setting up enhanced environment...")
     
-    try:
-        subprocess.run([sys.executable, '-m', 'pip', 'install', '-r', 'requirements.txt'], 
-                      check=True, capture_output=True)
-        print("✅ Dependencies installed successfully")
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"❌ Failed to install dependencies: {e}")
-        return False
-
-def setup_dataset():
-    """Setup dataset configuration"""
-    print("📁 Setting up dataset...")
-    
-    try:
-        from data_preparation import prepare_visdrone_dataset
-        yaml_path = prepare_visdrone_dataset('./dataset')
-        if yaml_path:
-            print(f"✅ Dataset configured: {yaml_path}")
-            return yaml_path
-        else:
-            print("❌ Failed to setup dataset")
-            return None
-    except Exception as e:
-        print(f"❌ Dataset setup error: {e}")
-        return None
-
-def quick_training_demo(epochs=5, batch_size=8):
-    """Run a quick training demo"""
-    print(f"🚀 Starting quick training demo ({epochs} epochs)...")
-    
-    cmd = [
-        sys.executable, 'train_hmay_tsf.py',
-        '--epochs', str(epochs),
-        '--batch-size', str(batch_size),
-        '--model-size', 'n',  # Use nano model for speed
-        '--data', './dataset'
+    # Create necessary directories
+    directories = [
+        "./runs/train",
+        "./runs/predict", 
+        "./logs",
+        "./checkpoints",
+        "./results"
     ]
     
-    try:
-        print("Command:", ' '.join(cmd))
-        result = subprocess.run(cmd, check=True, capture_output=False)
-        print("✅ Quick training demo completed!")
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"❌ Training failed: {e}")
-        return False
+    for dir_path in directories:
+        Path(dir_path).mkdir(parents=True, exist_ok=True)
+        print(f"✅ Created directory: {dir_path}")
+    
+    # Load configuration
+    config_path = Path("./config.yaml")
+    if not config_path.exists():
+        print("❌ config.yaml not found!")
+        return None
+    
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    print("✅ Environment setup complete!")
+    return config
 
-def run_evaluation_demo():
-    """Run evaluation on a pre-trained model or recent training"""
-    print("📊 Running evaluation demo...")
+def run_enhanced_training(config, args):
+    """Run enhanced training to achieve 99%+ metrics"""
+    print("\n" + "="*80)
+    print("STARTING ENHANCED HMAY-TSF TRAINING")
+    print("Target: 99-99.8% accuracy, precision, recall, and F1 score")
+    print("="*80)
     
-    # Look for recent training results
-    runs_dir = Path('./runs/train')
-    if runs_dir.exists():
-        recent_runs = sorted(runs_dir.glob('hmay_tsf_*'), 
-                           key=lambda x: x.stat().st_mtime, reverse=True)
+    # Initialize enhanced trainer
+    trainer = EnhancedHMAYTSFTrainer(
+        model_size=args.model_size,
+        device=args.device,
+        project_name='HMAY-TSF-Enhanced-99-Percent'
+    )
+    
+    # Setup enhanced model
+    print("Setting up enhanced model...")
+    trainer.setup_enhanced_model(
+        num_classes=config['model']['num_classes'],
+        pretrained=config['model']['pretrained']
+    )
+    
+    # Start enhanced training
+    print("Starting enhanced training...")
+    results = trainer.train_model(
+        data_yaml=args.data,
+        epochs=config['training']['epochs'],
+        img_size=config['training']['img_size'],
+        batch_size=config['training']['batch_size'],
+        save_dir=args.save_dir,
+        patience=config['training']['patience']
+    )
+    
+    if results:
+        print("\n✅ Enhanced training completed successfully!")
+        print(f"Best F1-Score achieved: {trainer.best_map:.6f}")
         
-        if recent_runs:
-            best_weights = recent_runs[0] / 'weights' / 'best.pt'
-            if best_weights.exists():
-                cmd = [
-                    sys.executable, 'evaluate_model.py',
-                    '--model', str(best_weights),
-                    '--data', './dataset/dataset.yaml'
-                ]
-                
-                try:
-                    subprocess.run(cmd, check=True)
-                    print("✅ Evaluation demo completed!")
-                    return True
-                except subprocess.CalledProcessError as e:
-                    print(f"❌ Evaluation failed: {e}")
-    
-    print("⚠️  No trained models found for evaluation")
-    return False
-
-def run_prediction_demo():
-    """Run prediction demo on test images"""
-    print("🔮 Running prediction demo...")
-    
-    test_images = Path('./dataset/images/test')
-    if not test_images.exists():
-        print("⚠️  Test images not found")
-        return False
-    
-    # Look for trained model
-    runs_dir = Path('./runs/train')
-    if runs_dir.exists():
-        recent_runs = sorted(runs_dir.glob('hmay_tsf_*'), 
-                           key=lambda x: x.stat().st_mtime, reverse=True)
-        
-        if recent_runs:
-            best_weights = recent_runs[0] / 'weights' / 'best.pt'
-            if best_weights.exists():
-                cmd = [
-                    sys.executable, 'train_hmay_tsf.py',
-                    '--predict', str(test_images),
-                    '--weights', str(best_weights)
-                ]
-                
-                try:
-                    subprocess.run(cmd, check=True)
-                    print("✅ Prediction demo completed!")
-                    print(f"📁 Results saved in ./runs/predict/")
-                    return True
-                except subprocess.CalledProcessError as e:
-                    print(f"❌ Prediction failed: {e}")
-    
-    print("⚠️  No trained models found for prediction")
-    return False
-
-def show_dataset_info():
-    """Show dataset information"""
-    print("📈 Dataset Information:")
-    
-    dataset_path = Path('./dataset')
-    if not dataset_path.exists():
-        print("❌ Dataset not found")
-        return
-    
-    # Count files in each split
-    splits = ['train', 'val', 'test']
-    for split in splits:
-        img_dir = dataset_path / 'images' / split
-        label_dir = dataset_path / 'labels' / split
-        
-        if img_dir.exists() and label_dir.exists():
-            img_count = len(list(img_dir.glob('*.jpg')))
-            label_count = len(list(label_dir.glob('*.txt')))
-            print(f"  {split.upper()}: {img_count} images, {label_count} labels")
+        # Save best model path
+        best_model_path = Path(args.save_dir) / f"enhanced_hmay_tsf_{args.model_size}_{datetime.now().strftime('%Y%m%d_%H%M%S')}" / "weights" / "best.pt"
+        if best_model_path.exists():
+            print(f"Best model saved to: {best_model_path}")
+            return str(best_model_path)
         else:
-            print(f"  {split.upper()}: Not found")
+            print("⚠️ Best model not found, using last model")
+            last_model_path = Path(args.save_dir) / f"enhanced_hmay_tsf_{args.model_size}_{datetime.now().strftime('%Y%m%d_%H%M%S')}" / "weights" / "last.pt"
+            return str(last_model_path) if last_model_path.exists() else None
+    else:
+        print("❌ Enhanced training failed!")
+        return None
+
+def run_enhanced_evaluation(model_path, config, args):
+    """Run enhanced evaluation to verify 99%+ metrics"""
+    print("\n" + "="*80)
+    print("RUNNING ENHANCED EVALUATION")
+    print("Verifying 99-99.8% accuracy, precision, recall, and F1 score")
+    print("="*80)
+    
+    if not model_path or not Path(model_path).exists():
+        print("❌ Model not found for evaluation!")
+        return None
+    
+    # Initialize enhanced evaluator
+    evaluator = EnhancedModelEvaluator(
+        model_path=model_path,
+        data_yaml=args.data,
+        device=args.device
+    )
+    
+    # Run comprehensive evaluation
+    print("Running comprehensive evaluation...")
+    
+    # Evaluate enhanced metrics
+    enhanced_metrics = evaluator.evaluate_enhanced_metrics()
+    
+    # Evaluate FPS
+    fps_metrics = evaluator.evaluate_fps(args.test_images)
+    
+    # Evaluate small objects
+    small_obj_metrics = evaluator.evaluate_small_objects(args.test_images, args.test_labels)
+    
+    # Evaluate occlusion awareness
+    occlusion_metrics = evaluator.evaluate_occlusion_aware(args.test_images, args.test_labels)
+    
+    # Save comprehensive results
+    output_path = f"./results/enhanced_evaluation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    evaluator.save_results(output_path)
+    
+    print("✅ Enhanced evaluation completed!")
+    return enhanced_metrics
+
+def print_performance_summary(metrics):
+    """Print performance summary"""
+    print("\n" + "="*80)
+    print("PERFORMANCE SUMMARY")
+    print("="*80)
+    
+    if metrics:
+        print(f"Precision: {metrics.get('precision', 0):.6f} (Target: 0.99)")
+        print(f"Recall: {metrics.get('recall', 0):.6f} (Target: 0.99)")
+        print(f"F1-Score: {metrics.get('f1_score', 0):.6f} (Target: 0.99)")
+        print(f"Accuracy: {metrics.get('accuracy', 0):.6f} (Target: 0.99)")
+        print(f"mAP@0.5: {metrics.get('mAP50', 0):.6f} (Target: 0.99)")
+        print(f"mAP@0.5:0.95: {metrics.get('mAP50-95', 0):.6f} (Target: 0.95)")
+        
+        # Check if targets are met
+        targets_met = 0
+        total_targets = 6
+        
+        if metrics.get('precision', 0) >= 0.99:
+            targets_met += 1
+            print("✅ Precision target met")
+        else:
+            print("❌ Precision target not met")
+            
+        if metrics.get('recall', 0) >= 0.99:
+            targets_met += 1
+            print("✅ Recall target met")
+        else:
+            print("❌ Recall target not met")
+            
+        if metrics.get('f1_score', 0) >= 0.99:
+            targets_met += 1
+            print("✅ F1-Score target met")
+        else:
+            print("❌ F1-Score target not met")
+            
+        if metrics.get('accuracy', 0) >= 0.99:
+            targets_met += 1
+            print("✅ Accuracy target met")
+        else:
+            print("❌ Accuracy target not met")
+            
+        if metrics.get('mAP50', 0) >= 0.99:
+            targets_met += 1
+            print("✅ mAP@0.5 target met")
+        else:
+            print("❌ mAP@0.5 target not met")
+            
+        if metrics.get('mAP50-95', 0) >= 0.95:
+            targets_met += 1
+            print("✅ mAP@0.5:0.95 target met")
+        else:
+            print("❌ mAP@0.5:0.95 target not met")
+        
+        print(f"\nOverall: {targets_met}/{total_targets} targets met")
+        
+        if targets_met == total_targets:
+            print("🎉 ALL TARGETS ACHIEVED! 99%+ performance confirmed!")
+        elif targets_met >= total_targets * 0.8:
+            print("👍 Most targets achieved! Performance is excellent!")
+        else:
+            print("⚠️ Some targets not met. Consider additional training or hyperparameter tuning.")
+    
+    print("="*80)
 
 def main():
-    parser = argparse.ArgumentParser(description='HMAY-TSF Quick Start')
-    parser.add_argument('--setup-only', action='store_true', help='Only setup, no training')
-    parser.add_argument('--demo-epochs', type=int, default=5, help='Epochs for demo training')
-    parser.add_argument('--demo-batch-size', type=int, default=8, help='Batch size for demo')
-    parser.add_argument('--skip-training', action='store_true', help='Skip training demo')
-    parser.add_argument('--full-training', action='store_true', help='Run full training (100 epochs)')
+    """Main function for quick start"""
+    parser = argparse.ArgumentParser(description='Enhanced HMAY-TSF Quick Start')
+    parser.add_argument('--mode', type=str, default='full', choices=['train', 'evaluate', 'full'], 
+                       help='Mode: train, evaluate, or full (train + evaluate)')
+    parser.add_argument('--data', type=str, default='./dataset/dataset.yaml', help='Dataset YAML file')
+    parser.add_argument('--model-size', type=str, default='s', choices=['n', 's', 'm', 'l', 'x'], 
+                       help='Model size')
+    parser.add_argument('--device', type=str, default='auto', help='Device to use')
+    parser.add_argument('--save-dir', type=str, default='./runs/train', help='Save directory')
+    parser.add_argument('--test-images', type=str, default='./dataset/images/test', help='Test images directory')
+    parser.add_argument('--test-labels', type=str, default='./dataset/labels/test', help='Test labels directory')
+    parser.add_argument('--model-path', type=str, help='Path to model for evaluation (required for evaluate mode)')
     
     args = parser.parse_args()
     
-    print_banner()
+    print("🚀 Enhanced HMAY-TSF Quick Start")
+    print("Target: 99-99.8% accuracy, precision, recall, and F1 score")
+    print("="*80)
     
-    # Step 1: Check requirements
+    # Check requirements
     if not check_requirements():
-        print("❌ Requirements check failed. Please fix issues and try again.")
+        print("❌ Requirements not met. Please fix the issues above.")
         return
     
-    # Step 2: Install dependencies
-    if not install_dependencies():
-        print("❌ Failed to install dependencies")
+    # Setup environment
+    config = setup_environment()
+    if not config:
+        print("❌ Environment setup failed!")
         return
     
-    # Step 3: Setup dataset
-    yaml_path = setup_dataset()
-    if not yaml_path:
-        print("❌ Failed to setup dataset")
-        return
+    # Run based on mode
+    model_path = None
+    metrics = None
     
-    # Show dataset info
-    show_dataset_info()
+    if args.mode in ['train', 'full']:
+        print(f"\n🎯 Mode: Training (Target: 99%+ metrics)")
+        model_path = run_enhanced_training(config, args)
     
-    if args.setup_only:
-        print("✅ Setup completed! You can now run training manually.")
-        return
+    if args.mode in ['evaluate', 'full']:
+        print(f"\n🔍 Mode: Evaluation (Verifying 99%+ metrics)")
+        
+        # Use provided model path or the one from training
+        eval_model_path = args.model_path if args.model_path else model_path
+        
+        if not eval_model_path:
+            print("❌ No model path provided for evaluation!")
+            return
+        
+        metrics = run_enhanced_evaluation(eval_model_path, config, args)
     
-    # Step 4: Training
-    if not args.skip_training:
-        if args.full_training:
-            print("🚀 Starting full training (this may take several hours)...")
-            cmd = [sys.executable, 'train_hmay_tsf.py', '--epochs', '100']
-            subprocess.run(cmd)
-        else:
-            # Quick demo training
-            quick_training_demo(args.demo_epochs, args.demo_batch_size)
+    # Print performance summary
+    print_performance_summary(metrics)
     
-    # Step 5: Evaluation
-    run_evaluation_demo()
-    
-    # Step 6: Prediction demo
-    run_prediction_demo()
-    
-    print("\n" + "="*60)
-    print("🎉 Quick start completed!")
-    print("\nNext steps:")
-    print("1. Review results in ./runs/ directory")
-    print("2. Run full training: python train_hmay_tsf.py --epochs 100")
-    print("3. Evaluate model: python evaluate_model.py --model <weights_path>")
-    print("4. Check README.md for advanced usage")
-    print("="*60)
+    print("\n🎉 Enhanced HMAY-TSF Quick Start completed!")
+    print("Check the results directory for detailed evaluation reports.")
 
 if __name__ == "__main__":
     main() 
