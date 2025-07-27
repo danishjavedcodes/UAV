@@ -1,7 +1,7 @@
 # Dataset files (too large for GitHub)
-dataset/
-dataset/*
-!dataset/dataset.yaml
+# dataset/
+# dataset/*
+# !dataset/dataset.yaml
 dataset/*.zip
 dataset/*.cache
 
