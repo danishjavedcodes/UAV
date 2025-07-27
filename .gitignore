@@ -1,8 +1,7 @@
 # Dataset files (too large for GitHub)
-# dataset/
-dataset/balanced_dataset/*
 dataset/*.zip
 dataset/*.cache
+./dataset/
 
 # Model weights and training outputs
 ./runs

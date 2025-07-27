@@ -8,7 +8,6 @@
 
 - **🚀 Rapid Convergence**: 99%+ performance by epoch 10 ✅ **ACHIEVED**
 - **🧠 Advanced Architecture**: Enhanced YOLOv8 with HMAY-TSF methodology
-- **⚖️ Dataset Balancing**: Comprehensive class distribution optimization for equal representation
 - **📈 Exponential Growth**: Real exponential learning curve with early acceleration
 - **🎓 Curriculum Learning**: Progressive difficulty from easy to expert in 10 epochs
 - **⚡ Optimized Training**: Higher learning rates, aggressive loss weights, enhanced augmentation
@@ -27,8 +26,6 @@
 | mAP@0.5:0.95 | 95%+ | **99.0%** | ✅ ACHIEVED |
 | Small Object Recall | 98.5%+ | **99.8%** | ✅ ACHIEVED |
 | Occlusion-Aware F1 | 98.5%+ | **99.8%** | ✅ ACHIEVED |
-| Balance Ratio | ≤2.0:1 | **1.5:1** | ✅ EXCELLENT |
-| Class Distribution Quality | Excellent/Good | **Excellent** | ✅ ACHIEVED |
 
 ## 📈 Actual Training Progress (Real Results)
 
@@ -68,14 +65,11 @@ python quick_start.py --mode demo
 
 ### Training (99% by Epoch 10) ✅ PROVEN
 ```bash
-# Start training for 99% performance by epoch 10 (with automatic dataset balancing)
+# Start training for 99% performance by epoch 10
 python quick_start.py --mode train --epochs 10
 
 # Or with custom parameters
 python quick_start.py --mode train --epochs 10 --batch-size 8 --model-size s
-
-# Disable dataset balancing if needed
-python quick_start.py --mode train --epochs 10 --disable-balancing
 ```
 
 ### Evaluation with Plots
@@ -96,28 +90,17 @@ Epoch 8:  ~97%  (Hard curriculum)
 Epoch 10: 99%+  (Hard curriculum - TARGET ACHIEVED!)
 ```
 
-### Dataset Balancing Results ✅ CONFIRMED
-```
-Original Balance Ratio: 10.5:1 (highly imbalanced)
-Balanced Ratio: 1.5:1 (excellent balance)
-Class Distribution: All 11 classes equally represented
-Augmentation: Intelligent augmentation for underrepresented classes
-Balance Quality: Excellent ✅
-```
-
 ## 🔧 Advanced Usage
 
 ### Custom Training
 ```python
 from train_hmay_tsf import AdvancedHMAYTSFTrainer
 
-# Initialize trainer for 99% performance by epoch 10 (with dataset balancing)
+# Initialize trainer for 99% performance by epoch 10
 trainer = AdvancedHMAYTSFTrainer(
     model_size='s',
     device='cuda',
-    project_name='HMAY-TSF-99-Percent-Balanced',
-    enable_dataset_balancing=True,  # Enable automatic dataset balancing
-    target_samples_per_class=1000   # Optional: specify target samples per class
+    project_name='HMAY-TSF-99-Percent'
 )
 
 # Setup model
@@ -130,26 +113,6 @@ results = trainer.train_model(
     img_size=640,
     batch_size=8
 )
-```
-
-### Standalone Dataset Balancing
-```python
-from train_hmay_tsf import DatasetBalancer
-
-# Initialize dataset balancer
-balancer = DatasetBalancer(
-    dataset_path='./dataset',
-    target_samples_per_class=1000
-)
-
-# Analyze current distribution
-analysis = balancer.analyze_class_distribution('train')
-
-# Create balanced dataset
-balanced_yaml = balancer.create_balanced_dataset()
-
-# Plot distribution comparison
-balancer.plot_class_distribution(save_path='distribution_comparison.png')
 ```
 
 ### Custom Evaluation
@@ -231,14 +194,7 @@ augmentation:
   mosaic: 1.0
   mixup: 0.3
   copy_paste: 0.4
-
-# Dataset Balancing Configuration
-dataset_balancing:
-  enabled: true
-  target_samples_per_class: auto  # or specific number
-  balance_quality_threshold: 2.0  # max acceptable ratio
-  augmentation_intensity: adaptive  # based on class imbalance
-  verification_enabled: true
+```
 
 ## 🎯 Methodology Details ✅ PROVEN SUCCESS
 
@@ -300,13 +256,6 @@ Our methodology has been **proven successful** in achieving 99%+ performance in 
 - **Cross-Stage Connections**: Improved gradient flow
 - **Feature Enhancement**: Better representation learning
 
-#### **7. Comprehensive Dataset Balancing System** ✅ IMPLEMENTED
-- **Class Distribution Analysis**: Detailed analysis of current class distribution
-- **Intelligent Sampling Strategy**: Oversampling and undersampling for optimal balance
-- **Targeted Augmentation**: Advanced augmentation for underrepresented classes
-- **Balance Quality Assessment**: Automatic evaluation of balance quality
-- **Visualization & Reporting**: Before/after distribution plots and comprehensive reports
-
 ### ⚡ Training Optimization Strategies ✅ PROVEN EFFECTIVE
 
 #### **1. Advanced Loss Functions**
@@ -330,12 +279,6 @@ Our methodology has been **proven successful** in achieving 99%+ performance in 
 - **Warm Restarts**: Periodic learning rate resets
 - **Early Mosaic Closure**: Reduces augmentation in final epochs
 
-#### **5. Dataset Balancing Optimization**
-- **Automatic Class Analysis**: Analyzes current distribution and identifies imbalances
-- **Intelligent Target Setting**: Automatic or manual target samples per class
-- **Adaptive Augmentation**: Intensity based on class imbalance severity
-- **Balance Verification**: Continuous monitoring of balance quality
-
 ### 📊 Performance Monitoring ✅ REAL-TIME TRACKING
 
 #### **1. Real-time Metrics Tracking**
@@ -350,7 +293,6 @@ Our methodology has been **proven successful** in achieving 99%+ performance in 
 - **Occlusion-Aware Metrics**: Performance under various occlusion levels
 - **Confidence Calibration**: Reliability assessment
 - **Robustness Metrics**: Scale, rotation, illumination invariance
-- **Dataset Balancing Metrics**: Balance ratio, class distribution quality, augmentation effectiveness
 
 ### 🎯 Target Achievement Strategy ✅ SUCCESSFULLY IMPLEMENTED
 
@@ -383,12 +325,6 @@ This methodology has been **proven successful** in achieving **rapid convergence
 - **Confidence Calibration**: Reliability of confidence scores
 - **Robustness Metrics**: Scale, rotation, illumination invariance
 
-### Dataset Balancing Metrics
-- **Balance Ratio**: Most common class instances / Least common class instances
-- **Class Distribution Quality**: Excellent (≤1.5:1), Good (≤2.0:1), Moderate (≤3.0:1), Poor (>3.0:1)
-- **Augmentation Effectiveness**: Impact of balancing augmentation on model performance
-- **Balance Verification**: Confirmation of equal class distribution achievement
-
 ## 🔍 Results Analysis
 
 ### Training Logs
@@ -401,12 +337,6 @@ This methodology has been **proven successful** in achieving **rapid convergence
 - **Comprehensive JSON**: All metrics and analysis
 - **Performance Summary**: Target achievement analysis
 - **Visualization Plots**: Performance charts and graphs
-
-### Dataset Balancing Reports
-- **Balance Analysis**: Class distribution analysis and imbalance identification
-- **Balance Report**: Detailed balance quality assessment
-- **Distribution Plots**: Before/after class distribution visualization
-- **Augmentation Logs**: Augmentation effectiveness tracking
 
 ## 🚀 Deployment
 
@@ -475,8 +405,6 @@ This implementation is based on the **Hybrid Multi-Scale Adaptive YOLO with Temp
 - **Occlusion Handling**: 99.8% (vs 75-85% traditional)
 - **Model Efficiency**: 11.1M parameters, 28.5 GFLOPs
 - **Convergence Speed**: 10x faster than traditional methods
-- **Dataset Balance**: 1.5:1 ratio (excellent balance achieved)
-- **Class Distribution**: All 11 classes equally represented
 
 This methodology represents a **breakthrough in rapid model convergence**, achieving state-of-the-art performance in UAV traffic monitoring with unprecedented speed and efficiency. The **99%+ performance by epoch 10** target has been **successfully achieved and validated**.
 
@@ -487,12 +415,6 @@ This methodology represents a **breakthrough in rapid model convergence**, achie
 3. Implement your improvements
 4. Add tests and documentation
 5. Submit a pull request
-
-## 📚 Dataset Balancing Documentation
-
-For detailed information about the dataset balancing functionality, see:
-- **[DATASET_BALANCING_README.md](DATASET_BALANCING_README.md)**: Comprehensive guide to dataset balancing
-- **[test_dataset_balancing.py](test_dataset_balancing.py)**: Test suite for balancing functionality
 
 ## 📄 License
 
