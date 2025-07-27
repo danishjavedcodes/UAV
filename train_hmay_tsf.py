@@ -1,292 +1,47 @@
 """
 Enhanced Training Script for HMAY-TSF Model
-Complete implementation with advanced training strategies for achieving 99.2%+ accuracy, precision, recall, and F1 score
+Addresses class imbalance using multiple strategies for object detection
 """
 
 import os
+import sys
+import argparse
+import yaml
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from ultralytics import YOLO
-import yaml
-import wandb
-from pathlib import Path
+from torch.utils.data import DataLoader, WeightedRandomSampler
+from torch.utils.tensorboard import SummaryWriter
 import numpy as np
-from datetime import datetime
-import argparse
-import json
-import pandas as pd
-import csv
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
 import cv2
-from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
-import torch.nn.functional as F
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, OneCycleLR, ReduceLROnPlateau
-import torch.cuda.amp as amp
-import math
-from collections import Counter
-import glob
-from collections import defaultdict
+from pathlib import Path
+import random
+from collections import Counter, defaultdict
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import precision_recall_fscore_support
+import time
+import json
+from tqdm import tqdm
+import warnings
+warnings.filterwarnings('ignore')
 
-from hmay_tsf_model import HMAY_TSF, prepare_visdrone_dataset
-from data_preparation import prepare_visdrone_dataset as prep_dataset, get_dataloader
+# Import custom modules
+from hmay_tsf_model_simple import HMAY_TSF
+from data_preparation import VisDroneDataset, ClassBalancedAugmentation
 
-class ClassBalancingSystem:
-    """Comprehensive class balancing system for handling severe class imbalance"""
-    
-    def __init__(self, dataset_path='./dataset', num_classes=11):
-        self.dataset_path = dataset_path
-        self.num_classes = num_classes
-        self.class_counts = None
-        self.class_weights = None
-        self.sample_weights = None
-        self.calculate_class_distribution()
-    
-    def calculate_class_distribution(self):
-        """Calculate class distribution from training labels"""
-        print("Calculating class distribution for balancing...")
-        
-        # Collect all class labels from training set
-        train_labels_path = os.path.join(self.dataset_path, 'labels', 'train')
-        all_labels = []
-        
-        for label_file in glob.glob(os.path.join(train_labels_path, '*.txt')):
-            with open(label_file, 'r') as f:
-                for line in f.readlines():
-                    if line.strip():
-                        class_id = int(line.split()[0])
-                        all_labels.append(class_id)
-        
-        # Count class occurrences
-        self.class_counts = Counter(all_labels)
-        total_samples = sum(self.class_counts.values())
-        
-        print("Class Distribution:")
-        for class_id in sorted(self.class_counts.keys()):
-            count = self.class_counts[class_id]
-            percentage = (count / total_samples) * 100
-            print(f"  Class {class_id}: {count:,} ({percentage:.2f}%)")
-        
-        # Calculate class weights for balanced training
-        self.calculate_class_weights()
-        
-        return self.class_counts
-    
-    def calculate_class_weights(self):
-        """Calculate balanced class weights using inverse frequency"""
-        if self.class_counts is None:
-            self.calculate_class_distribution()
-        
-        # Calculate inverse frequency weights with more aggressive balancing
-        max_count = max(self.class_counts.values())
-        self.class_weights = torch.ones(self.num_classes)
-        
-        for class_id, count in self.class_counts.items():
-            if count > 0:
-                # More aggressive inverse frequency weighting
-                weight = max_count / count
-                # Apply cubic root to reduce extreme weights but keep them significant
-                weight = weight ** (1/3)
-                # Cap maximum weight to prevent over-emphasis but allow higher values
-                weight = min(weight, 15.0)
-                # Ensure minimum weight for rare classes
-                weight = max(weight, 2.0)
-                self.class_weights[class_id] = weight
-        
-        print("Class Weights:")
-        for class_id in sorted(self.class_counts.keys()):
-            weight = self.class_weights[class_id]
-            print(f"  Class {class_id}: {weight:.3f}")
-        
-        return self.class_weights
-    
-    def get_balanced_sampler(self, dataset):
-        """Create weighted random sampler for balanced training"""
-        if self.sample_weights is None:
-            self.calculate_sample_weights(dataset)
-        
-        return WeightedRandomSampler(
-            weights=self.sample_weights,
-            num_samples=len(self.sample_weights),
-            replacement=True
-        )
-    
-    def calculate_sample_weights(self, dataset):
-        """Calculate sample weights based on class distribution in each sample"""
-        print("Calculating sample weights for balanced sampling...")
-        
-        sample_weights = []
-        
-        for idx in range(len(dataset)):
-            # Get labels for this sample
-            sample = dataset[idx]
-            if isinstance(sample, (list, tuple)) and len(sample) >= 2:
-                labels = sample[1]  # Assuming labels are in second position
-            else:
-                # If dataset returns different format, try to extract labels
-                labels = self.extract_labels_from_sample(sample)
-            
-            # Calculate weight based on classes in this sample
-            if len(labels) > 0:
-                # Use the rarest class in this sample to determine weight
-                class_ids = labels[:, 0].astype(int) if hasattr(labels, 'shape') else [int(l[0]) for l in labels]
-                rarest_class = min(class_ids, key=lambda x: self.class_counts.get(x, 1))
-                weight = self.class_weights[rarest_class]
-            else:
-                weight = 1.0
-            
-            sample_weights.append(weight)
-        
-        self.sample_weights = torch.tensor(sample_weights, dtype=torch.float)
-        print(f"Sample weights calculated: min={self.sample_weights.min():.3f}, max={self.sample_weights.max():.3f}")
-        
-        return self.sample_weights
-    
-    def extract_labels_from_sample(self, sample):
-        """Extract labels from various dataset formats"""
-        if hasattr(sample, 'labels'):
-            return sample.labels
-        elif isinstance(sample, dict) and 'labels' in sample:
-            return sample['labels']
-        elif isinstance(sample, (list, tuple)) and len(sample) > 1:
-            return sample[1]
-        else:
-            return []
-
-    def create_balanced_dataset(self, output_path='./dataset_balanced'):
-        """Create a balanced dataset by oversampling rare classes and undersampling common classes"""
-        print("Creating balanced dataset...")
-        
-        if self.class_counts is None:
-            self.calculate_class_distribution()
-        
-        # Calculate target samples per class (use median as target)
-        counts = list(self.class_counts.values())
-        target_samples = int(np.median(counts))
-        
-        print(f"Target samples per class: {target_samples}")
-        
-        # Create output directory structure
-        output_path = Path(output_path)
-        (output_path / 'images' / 'train').mkdir(parents=True, exist_ok=True)
-        (output_path / 'images' / 'val').mkdir(parents=True, exist_ok=True)
-        (output_path / 'labels' / 'train').mkdir(parents=True, exist_ok=True)
-        (output_path / 'labels' / 'val').mkdir(parents=True, exist_ok=True)
-        
-        # Collect all training files
-        train_images_path = Path(self.dataset_path) / 'images' / 'train'
-        train_labels_path = Path(self.dataset_path) / 'labels' / 'train'
-        
-        # Group files by class
-        class_files = defaultdict(list)
-        
-        for label_file in train_labels_path.glob('*.txt'):
-            image_file = train_images_path / f"{label_file.stem}.jpg"
-            if image_file.exists():
-                with open(label_file, 'r') as f:
-                    for line in f.readlines():
-                        if line.strip():
-                            class_id = int(line.split()[0])
-                            class_files[class_id].append((image_file, label_file))
-                            break  # Only count each image once
-        
-        # Create balanced dataset
-        balanced_files = []
-        
-        for class_id, files in class_files.items():
-            current_count = len(files)
-            target_count = target_samples
-            
-            if current_count < target_count:
-                # Oversample rare classes
-                oversample_factor = target_count // current_count + 1
-                selected_files = files * oversample_factor
-                selected_files = selected_files[:target_count]
-            else:
-                # Undersample common classes
-                selected_files = files[:target_count]
-            
-            balanced_files.extend(selected_files)
-            print(f"Class {class_id}: {current_count} -> {len(selected_files)} samples")
-        
-        # Shuffle and split into train/val
-        np.random.shuffle(balanced_files)
-        split_idx = int(len(balanced_files) * 0.8)
-        train_files = balanced_files[:split_idx]
-        val_files = balanced_files[split_idx:]
-        
-        # Copy files
-        for i, (image_file, label_file) in enumerate(train_files):
-            # Copy image
-            new_image_path = output_path / 'images' / 'train' / f"{i:06d}.jpg"
-            import shutil
-            shutil.copy2(image_file, new_image_path)
-            
-            # Copy label
-            new_label_path = output_path / 'labels' / 'train' / f"{i:06d}.txt"
-            shutil.copy2(label_file, new_label_path)
-        
-        for i, (image_file, label_file) in enumerate(val_files):
-            # Copy image
-            new_image_path = output_path / 'images' / 'val' / f"{i:06d}.jpg"
-            import shutil
-            shutil.copy2(image_file, new_image_path)
-            
-            # Copy label
-            new_label_path = output_path / 'labels' / 'val' / f"{i:06d}.txt"
-            shutil.copy2(label_file, new_label_path)
-        
-        print(f"Balanced dataset created:")
-        print(f"  Train: {len(train_files)} images")
-        print(f"  Val: {len(val_files)} images")
-        print(f"  Location: {output_path}")
-        
-        return str(output_path)
-
-class AdvancedFocalLoss(nn.Module):
-    """Advanced Focal Loss with label smoothing and class balancing"""
-    
-    def __init__(self, alpha=1, gamma=2, reduction='mean', label_smoothing=0.1, class_weights=None, 
-                 use_balanced_focal=True, beta=0.9999):
-        super().__init__()
+class FocalLoss(nn.Module):
+    """Focal Loss for addressing class imbalance in object detection"""
+    def __init__(self, alpha=1, gamma=2, reduction='mean'):
+        super(FocalLoss, self).__init__()
         self.alpha = alpha
         self.gamma = gamma
         self.reduction = reduction
-        self.label_smoothing = label_smoothing
-        self.class_weights = class_weights
-        self.use_balanced_focal = use_balanced_focal
-        self.beta = beta
         
-        # For balanced focal loss
-        self.class_counts = None
-        self.effective_num = None
-    
     def forward(self, inputs, targets):
-        # Apply label smoothing
-        if self.label_smoothing > 0:
-            num_classes = inputs.size(-1)
-            targets_one_hot = F.one_hot(targets, num_classes).float()
-            targets_one_hot = targets_one_hot * (1 - self.label_smoothing) + self.label_smoothing / num_classes
-        else:
-            targets_one_hot = F.one_hot(targets, inputs.size(-1)).float()
-        
-        # Apply class weights if provided
-        if self.class_weights is not None:
-            ce_loss = F.cross_entropy(inputs, targets_one_hot, reduction='none', weight=self.class_weights)
-        else:
-            ce_loss = F.cross_entropy(inputs, targets_one_hot, reduction='none')
-        
-        # Calculate focal loss
+        ce_loss = nn.functional.cross_entropy(inputs, targets, reduction='none')
         pt = torch.exp(-ce_loss)
-        
-        if self.use_balanced_focal:
-            # Balanced focal loss for severe class imbalance
-            focal_loss = self.alpha * (1 - pt) ** self.gamma * ce_loss
-        else:
-            # Standard focal loss
-            focal_loss = self.alpha * (1 - pt) ** self.gamma * ce_loss
+        focal_loss = self.alpha * (1 - pt) ** self.gamma * ce_loss
         
         if self.reduction == 'mean':
             return focal_loss.mean()
@@ -295,902 +50,599 @@ class AdvancedFocalLoss(nn.Module):
         else:
             return focal_loss
 
-class AdvancedIoULoss(nn.Module):
-    """Advanced IoU Loss with CIoU and DIoU variants"""
-    
-    def __init__(self, reduction='mean', iou_type='ciou'):
-        super().__init__()
-        self.reduction = reduction
-        self.iou_type = iou_type
-    
-    def forward(self, pred, target):
-        # Calculate IoU loss with advanced variants
-        pred_x1, pred_y1, pred_x2, pred_y2 = pred[:, 0], pred[:, 1], pred[:, 2], pred[:, 3]
-        target_x1, target_y1, target_x2, target_y2 = target[:, 0], target[:, 1], target[:, 2], target[:, 3]
+class BalancedObjectDetectionLoss(nn.Module):
+    """Balanced loss function for object detection with class weighting"""
+    def __init__(self, num_classes=11, class_weights=None, focal_alpha=1, focal_gamma=2):
+        super(BalancedObjectDetectionLoss, self).__init__()
+        self.num_classes = num_classes
+        self.focal_alpha = focal_alpha
+        self.focal_gamma = focal_gamma
         
-        # Calculate intersection
-        x1 = torch.max(pred_x1, target_x1)
-        y1 = torch.max(pred_y1, target_y1)
-        x2 = torch.min(pred_x2, target_x2)
-        y2 = torch.min(pred_y2, target_y2)
-        
-        intersection = torch.clamp(x2 - x1, min=0) * torch.clamp(y2 - y1, min=0)
-        
-        # Calculate union
-        pred_area = (pred_x2 - pred_x1) * (pred_y2 - pred_y1)
-        target_area = (target_x2 - target_x1) * (target_y2 - target_y1)
-        union = pred_area + target_area - intersection
-        
-        # Calculate IoU
-        iou = intersection / (union + 1e-6)
-        
-        if self.iou_type == 'ciou':
-            # Complete IoU loss
-            c_x1 = torch.min(pred_x1, target_x1)
-            c_y1 = torch.min(pred_y1, target_y1)
-            c_x2 = torch.max(pred_x2, target_x2)
-            c_y2 = torch.max(pred_y2, target_y2)
-            
-            c_area = (c_x2 - c_x1) * (c_y2 - c_y1)
-            c = c_area
-            
-            # Center distance
-            pred_center_x = (pred_x1 + pred_x2) / 2
-            pred_center_y = (pred_y1 + pred_y2) / 2
-            target_center_x = (target_x1 + target_x2) / 2
-            target_center_y = (target_y1 + target_y2) / 2
-            
-            center_distance = (pred_center_x - target_center_x) ** 2 + (pred_center_y - target_center_y) ** 2
-            c_distance = (c_x2 - c_x1) ** 2 + (c_y2 - c_y1) ** 2
-            
-            # Aspect ratio
-            pred_w = pred_x2 - pred_x1
-            pred_h = pred_y2 - pred_y1
-            target_w = target_x2 - target_x1
-            target_h = target_y2 - target_y1
-            
-            v = (4 / (math.pi ** 2)) * torch.pow(torch.atan(target_w / target_h) - torch.atan(pred_w / pred_h), 2)
-            
-            alpha = v / (1 - iou + v + 1e-6)
-            
-            ciou_loss = 1 - iou + center_distance / c_distance + alpha * v
-            iou_loss = ciou_loss
+        # Initialize class weights
+        if class_weights is None:
+            self.class_weights = torch.ones(num_classes)
         else:
-            iou_loss = 1 - iou
+            self.class_weights = torch.tensor(class_weights, dtype=torch.float32)
         
-        if self.reduction == 'mean':
-            return iou_loss.mean()
-        elif self.reduction == 'sum':
-            return iou_loss.sum()
-        else:
-            return iou_loss
+        # Loss components
+        self.focal_loss = FocalLoss(alpha=focal_alpha, gamma=focal_gamma)
+        self.box_loss_weight = 7.5
+        self.cls_loss_weight = 0.5
+        self.dfl_loss_weight = 1.5
+        
+    def forward(self, predictions, targets):
+        """
+        Compute balanced loss for object detection
+        Args:
+            predictions: List of prediction tensors from different scales
+            targets: Ground truth targets
+        """
+        total_loss = 0
+        cls_loss = 0
+        box_loss = 0
+        dfl_loss = 0
+        
+        # Process each scale
+        for pred in predictions:
+            # Extract components (simplified - in practice, you'd decode YOLO outputs)
+            B, C, H, W = pred.shape
+            pred = pred.view(B, 3, -1, H, W)  # 3 anchors
+            
+            # Classification loss with focal loss and class weights
+            cls_pred = pred[:, :, 5:, :, :]  # Class predictions
+            cls_pred = cls_pred.view(-1, self.num_classes)
+            
+            # Apply focal loss with class weights
+            if targets is not None:
+                # This is a simplified version - you'd need proper target matching
+                cls_loss += self.focal_loss(cls_pred, targets) * self.class_weights.mean()
+            else:
+                # If no targets, use a simple regularization loss
+                cls_loss += torch.mean(torch.abs(cls_pred))
+            
+            # Box regression loss (simplified)
+            box_pred = pred[:, :, :4, :, :]  # Box predictions
+            if targets is not None:
+                # Simplified box loss
+                box_loss += torch.mean(torch.abs(box_pred))
+            else:
+                # If no targets, use a simple regularization loss
+                box_loss += torch.mean(torch.abs(box_pred))
+        
+        total_loss = (self.box_loss_weight * box_loss + 
+                     self.cls_loss_weight * cls_loss + 
+                     self.dfl_loss_weight * dfl_loss)
+        
+        return total_loss, {
+            'total': total_loss.item(),
+            'box': box_loss.item(),
+            'cls': cls_loss.item(),
+            'dfl': dfl_loss.item()
+        }
 
-class CurriculumLearning:
-    """Advanced Curriculum Learning for rapid convergence to 99% by epoch 10"""
-    
-    def __init__(self, total_epochs=10):
-        self.total_epochs = total_epochs
-        self.current_epoch = 0
+class ClassBalancedSampler:
+    """Balanced sampler for addressing class imbalance"""
+    def __init__(self, dataset, class_counts, sampling_strategy='balanced'):
+        self.dataset = dataset
+        self.class_counts = class_counts
+        self.sampling_strategy = sampling_strategy
         
-        # AGGRESSIVE CURRICULUM FOR 99% BY EPOCH 10
-        self.stages = [
-            {'epochs': 3, 'difficulty': 'easy', 'augmentation_strength': 0.2},
-            {'epochs': 5, 'difficulty': 'medium', 'augmentation_strength': 0.5},
-            {'epochs': 8, 'difficulty': 'hard', 'augmentation_strength': 0.8},
-            {'epochs': 10, 'difficulty': 'expert', 'augmentation_strength': 1.0},
-            {'epochs': total_epochs, 'difficulty': 'master', 'augmentation_strength': 1.0}
-        ]
-    
-    def get_current_stage(self):
-        """Get current curriculum stage"""
-        cumulative_epochs = 0
-        for stage in self.stages:
-            cumulative_epochs += stage['epochs']
-            if self.current_epoch < cumulative_epochs:
-                return stage
-        return self.stages[-1]
-    
-    def update_epoch(self, epoch):
-        """Update current epoch"""
-        self.current_epoch = epoch
-    
-    def get_augmentation_strength(self):
-        """Get current augmentation strength"""
-        return self.get_current_stage()['augmentation_strength']
-
-class AdvancedAugmentation:
-    """Advanced data augmentation with curriculum learning"""
-    
-    def __init__(self, img_size=640, is_training=True, curriculum_learning=None):
-        self.img_size = img_size
-        self.is_training = is_training
-        self.curriculum_learning = curriculum_learning
+        # Calculate sample weights
+        self.sample_weights = self._calculate_sample_weights()
         
-        if is_training:
-            self.transform = self._get_training_transform()
-        else:
-            self.transform = self._get_validation_transform()
-    
-    def _get_training_transform(self):
-        """Get training transform with curriculum learning"""
-        strength = 1.0
-        if self.curriculum_learning:
-            strength = self.curriculum_learning.get_augmentation_strength()
+    def _calculate_sample_weights(self):
+        """Calculate weights for each sample based on class distribution"""
+        weights = []
+        max_count = max(self.class_counts.values())
         
-        return A.Compose([
-            # Geometric augmentations with curriculum strength
-            A.RandomResizedCrop(
-                height=self.img_size, width=self.img_size, 
-                scale=(0.8, 1.0), ratio=(0.8, 1.2), p=0.8 * strength
-            ),
-            A.HorizontalFlip(p=0.5),
-            A.VerticalFlip(p=0.1 * strength),
-            A.RandomRotate90(p=0.3 * strength),
-            A.ShiftScaleRotate(
-                shift_limit=0.1 * strength, 
-                scale_limit=0.2 * strength, 
-                rotate_limit=15 * strength, 
-                p=0.7 * strength
-            ),
+        for idx in range(len(self.dataset)):
+            # Get classes in this sample
+            _, label_file = self.dataset.img_files[idx], self.dataset.label_files[idx]
+            labels = self.dataset.load_labels(label_file)
             
-            # Color augmentations with curriculum strength
-            A.OneOf([
-                A.RandomBrightnessContrast(
-                    brightness_limit=0.3 * strength, 
-                    contrast_limit=0.3 * strength, 
-                    p=1.0
-                ),
-                A.RandomGamma(gamma_limit=(80, 120), p=1.0),
-                A.CLAHE(clip_limit=2.0, tile_grid_size=(8, 8), p=1.0),
-            ], p=0.8 * strength),
-            
-            A.OneOf([
-                A.HueSaturationValue(
-                    hue_shift_limit=20 * strength, 
-                    sat_shift_limit=30 * strength, 
-                    val_shift_limit=20 * strength, 
-                    p=1.0
-                ),
-                A.RGBShift(
-                    r_shift_limit=20 * strength, 
-                    g_shift_limit=20 * strength, 
-                    b_shift_limit=20 * strength, 
-                    p=1.0
-                ),
-                A.ChannelShuffle(p=1.0),
-            ], p=0.5 * strength),
-            
-            # Advanced augmentations
-            A.OneOf([
-                A.GaussNoise(var_limit=(10.0, 50.0), p=1.0),
-                A.GaussianBlur(blur_limit=(3, 7), p=1.0),
-                A.MotionBlur(blur_limit=7, p=1.0),
-                A.MedianBlur(blur_limit=5, p=1.0),
-            ], p=0.3 * strength),
-            
-            # Weather effects
-            A.OneOf([
-                A.RandomRain(
-                    slant_lower=-10, slant_upper=10, 
-                    drop_length=20, drop_width=1, 
-                    drop_color=(200, 200, 200), p=1.0
-                ),
-                A.RandomFog(fog_coef_lower=0.1, fog_coef_upper=0.3, p=1.0),
-                A.RandomSunFlare(
-                    flare_roi=(0, 0, 1, 0.5), 
-                    angle_lower=0, angle_upper=1, p=1.0
-                ),
-            ], p=0.2 * strength),
-            
-            # Advanced augmentations
-            A.CoarseDropout(
-                max_holes=8, max_height=32, max_width=32, 
-                min_holes=1, p=0.3 * strength
-            ),
-            A.GridDistortion(num_steps=5, distort_limit=0.3, p=0.2 * strength),
-            A.OpticalDistortion(distort_limit=0.2, shift_limit=0.15, p=0.2 * strength),
-            
-            # Normalization
-            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            ToTensorV2(),
-        ], bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels']))
+            if len(labels) == 0:
+                # No objects - give medium weight
+                weights.append(1.0)
+            else:
+                # Calculate weight based on classes present
+                class_ids = labels[:, 0].astype(int)
+                class_weights = [max_count / self.class_counts.get(cid, 1) for cid in class_ids]
+                # Use the maximum weight for this sample
+                weights.append(max(class_weights) if class_weights else 1.0)
+        
+        return weights
     
-    def _get_validation_transform(self):
-        """Get validation transform"""
-        return A.Compose([
-            A.Resize(height=self.img_size, width=self.img_size),
-            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            ToTensorV2(),
-        ], bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels']))
-    
-    def __call__(self, image, bboxes=None, labels=None):
-        if bboxes is not None and labels is not None:
-            transformed = self.transform(image=image, bboxes=bboxes, class_labels=labels)
-            return transformed['image'], transformed['bboxes'], transformed['class_labels']
-        else:
-            transformed = self.transform(image=image)
-            return transformed['image']
-
-class AdvancedHMAYTSFTrainer:
-    """Advanced trainer for HMAY-TSF model with comprehensive optimization"""
-    
-    def __init__(self, model_size='s', device='auto', project_name='HMAY-TSF-Advanced'):
-        self.device = device if device != 'auto' else ('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model_size = model_size
-        self.project_name = project_name
-        
-        print(f"Using device: {self.device}")
-        print(f"CUDA available: {torch.cuda.is_available()}")
-        
-        # Initialize model
-        self.model = None
-        self.best_map = 0.0
-        self.best_metrics = {}
-        
-        # Initialize class balancing system
-        self.class_balancing = ClassBalancingSystem(dataset_path='./dataset', num_classes=11)
-        
-        # Advanced loss functions with class balancing
-        class_weights = self.class_balancing.class_weights.to(self.device) if self.class_balancing.class_weights is not None else None
-        self.focal_loss = AdvancedFocalLoss(
-            alpha=1, 
-            gamma=2, 
-            label_smoothing=0.1, 
-            class_weights=class_weights,
-            use_balanced_focal=True
+    def get_sampler(self):
+        """Get weighted random sampler"""
+        return WeightedRandomSampler(
+            weights=self.sample_weights,
+            num_samples=len(self.dataset),
+            replacement=True
         )
-        self.iou_loss = AdvancedIoULoss(iou_type='ciou')
+
+class TrainingMetrics:
+    """Track training metrics including class-specific performance"""
+    def __init__(self, num_classes=11):
+        self.num_classes = num_classes
+        self.reset()
         
-        # Curriculum learning
-        self.curriculum_learning = CurriculumLearning(total_epochs=10)
+    def reset(self):
+        """Reset all metrics"""
+        self.losses = defaultdict(list)
+        self.class_precision = defaultdict(list)
+        self.class_recall = defaultdict(list)
+        self.class_f1 = defaultdict(list)
+        self.mAP = []
         
-        # Mixed precision training
-        self.scaler = amp.GradScaler()
+    def update(self, loss_dict, predictions=None, targets=None):
+        """Update metrics with new batch results"""
+        # Update losses
+        for key, value in loss_dict.items():
+            self.losses[key].append(value)
         
-        # CSV logging setup
-        self.csv_log_path = None
-        self.training_metrics = []
+        # Update class-specific metrics (simplified)
+        if predictions is not None and targets is not None:
+            # This would calculate precision, recall, F1 for each class
+            pass
+    
+    def get_summary(self):
+        """Get summary of current metrics"""
+        summary = {}
+        
+        # Average losses
+        for key, values in self.losses.items():
+            summary[f'avg_{key}_loss'] = np.mean(values[-100:])  # Last 100 batches
+        
+        return summary
+
+class HMAYTSFTrainer:
+    """Enhanced trainer for HMAY-TSF model with class balancing"""
+    
+    def __init__(self, config):
+        self.config = config
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.setup_directories()
+        self.setup_model()
+        self.setup_data()
+        self.setup_training_components()
+        
+    def setup_directories(self):
+        """Setup output directories"""
+        self.output_dir = Path(self.config['output_dir'])
+        self.output_dir.mkdir(exist_ok=True)
+        
+        self.checkpoint_dir = self.output_dir / 'checkpoints'
+        self.checkpoint_dir.mkdir(exist_ok=True)
+        
+        self.log_dir = self.output_dir / 'logs'
+        self.log_dir.mkdir(exist_ok=True)
+        
+        # Setup tensorboard
+        self.writer = SummaryWriter(self.log_dir)
+        
+    def setup_model(self):
+        """Initialize HMAY-TSF model"""
+        print("Initializing HMAY-TSF model...")
+        
+        self.model = HMAY_TSF(
+            model_size=self.config['model_size'],
+            num_classes=self.config['num_classes'],
+            pretrained=self.config['pretrained']
+        ).to(self.device)
+        
+        # Disable YOLO's built-in training method to avoid conflicts
+        self.model.base_yolo.train = lambda *args, **kwargs: None
+        
+        # Print model summary
+        total_params = sum(p.numel() for p in self.model.parameters())
+        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        print(f"Total parameters: {total_params:,}")
+        print(f"Trainable parameters: {trainable_params:,}")
+        
+    def setup_data(self):
+        """Setup data loaders with class balancing"""
+        print("Setting up data loaders...")
+        
+        # Load dataset configuration
+        with open(self.config['data_yaml'], 'r') as f:
+            data_config = yaml.safe_load(f)
+        
+        # Analyze class distribution
+        self.class_analyzer = ClassBalancedAugmentation(
+            dataset_path=data_config['path'],
+            target_samples_per_class=self.config.get('target_samples_per_class', 5000)
+        )
+        
+        # Get class distribution
+        self.class_counts = self.class_analyzer.analyze_class_distribution()
+        self.class_weights = self.class_analyzer.calculate_class_weights()
+        
+        print("Class Distribution:")
+        for class_id, count in sorted(self.class_counts.items()):
+            weight = self.class_weights[class_id]
+            print(f"  Class {class_id}: {count:,} samples (weight: {weight:.3f})")
+        
+        # Create datasets
+        train_dataset = VisDroneDataset(
+            img_dir=os.path.join(data_config['path'], data_config['train']),
+            label_dir=os.path.join(data_config['path'], 'labels/train'),
+            img_size=self.config['img_size'],
+            augment=True,
+            super_res=self.config.get('use_super_resolution', False)
+        )
+        
+        val_dataset = VisDroneDataset(
+            img_dir=os.path.join(data_config['path'], data_config['val']),
+            label_dir=os.path.join(data_config['path'], 'labels/val'),
+            img_size=self.config['img_size'],
+            augment=False,
+            super_res=False
+        )
+        
+        # Setup balanced sampling
+        self.balanced_sampler = ClassBalancedSampler(
+            train_dataset, 
+            self.class_counts,
+            sampling_strategy='balanced'
+        )
+        
+        # Create data loaders
+        self.train_loader = DataLoader(
+            train_dataset,
+            batch_size=self.config['batch_size'],
+            sampler=self.balanced_sampler.get_sampler(),
+            num_workers=self.config['num_workers'],
+            pin_memory=True,
+            drop_last=True
+        )
+        
+        self.val_loader = DataLoader(
+            val_dataset,
+            batch_size=self.config['batch_size'],
+            shuffle=False,
+            num_workers=self.config['num_workers'],
+            pin_memory=True
+        )
+        
+        print(f"Train samples: {len(train_dataset)}")
+        print(f"Val samples: {len(val_dataset)}")
+        
+    def setup_training_components(self):
+        """Setup optimizer, scheduler, and loss function"""
+        print("Setting up training components...")
+        
+        # Optimizer with different learning rates for different components
+        backbone_params = []
+        enhanced_params = []
+        
+        for name, param in self.model.named_parameters():
+            if 'base_yolo' in name:
+                backbone_params.append(param)
+            else:
+                enhanced_params.append(param)
+        
+        self.optimizer = optim.AdamW([
+            {'params': backbone_params, 'lr': self.config['lr'] * 0.1},
+            {'params': enhanced_params, 'lr': self.config['lr']}
+        ], weight_decay=self.config['weight_decay'])
+        
+        # Learning rate scheduler
+        self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            self.optimizer,
+            T_0=self.config['epochs'] // 3,
+            T_mult=2,
+            eta_min=self.config['lr'] * 0.01
+        )
+        
+        # Loss function with class balancing
+        self.criterion = BalancedObjectDetectionLoss(
+            num_classes=self.config['num_classes'],
+            class_weights=list(self.class_weights.values()),
+            focal_alpha=self.config.get('focal_alpha', 1),
+            focal_gamma=self.config.get('focal_gamma', 2)
+        )
+        
+        # Metrics tracker
+        self.metrics = TrainingMetrics(num_classes=self.config['num_classes'])
+        
+        # Training state
         self.current_epoch = 0
+        self.best_val_loss = float('inf')
+        self.patience_counter = 0
         
-    def setup_csv_logging(self, save_dir):
-        """Setup CSV logging for training metrics"""
-        self.csv_log_path = Path(save_dir) / 'advanced_training_metrics.csv'
-        self.csv_log_path.parent.mkdir(parents=True, exist_ok=True)
+    def train_epoch(self):
+        """Train for one epoch"""
+        # Set model to training mode properly
+        self.model.enhanced_backbone.train()
+        self.model.base_yolo.model.eval()  # Keep base YOLO in eval mode
         
-        # Advanced headers with comprehensive metrics including class balancing
-        headers = [
-            'epoch', 'train_loss', 'val_loss', 
-            'train_precision', 'train_recall', 'train_f1', 'train_accuracy',
-            'val_precision', 'val_recall', 'val_f1', 'val_accuracy',
-            'map50', 'map50_95', 'lr', 'focal_loss', 'iou_loss', 'box_loss',
-            'small_object_recall', 'occlusion_aware_f1', 'curriculum_stage',
-            'augmentation_strength', 'gradient_norm', 'class_imbalance_ratio', 'avg_class_weight'
-        ]
+        epoch_losses = defaultdict(list)
         
-        with open(self.csv_log_path, 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(headers)
+        progress_bar = tqdm(self.train_loader, desc=f'Epoch {self.current_epoch + 1}')
         
-        print(f"Advanced CSV logging initialized: {self.csv_log_path}")
-    
-    def log_metrics_to_csv(self, metrics_dict):
-        """Log advanced metrics to CSV file"""
-        if self.csv_log_path is None:
-            return
+        for batch_idx, batch in enumerate(progress_bar):
+            # Handle different data formats
+            if isinstance(batch, (list, tuple)):
+                images, targets = batch
+            else:
+                images = batch
+                targets = None
+                
+            images = images.to(self.device)
+            targets = targets.to(self.device) if targets is not None else None
             
-        with open(self.csv_log_path, 'a', newline='') as f:
-            writer = csv.writer(f)
-            row = [
-                metrics_dict.get('epoch', ''),
-                metrics_dict.get('train_loss', ''),
-                metrics_dict.get('val_loss', ''),
-                metrics_dict.get('train_precision', ''),
-                metrics_dict.get('train_recall', ''),
-                metrics_dict.get('train_f1', ''),
-                metrics_dict.get('train_accuracy', ''),
-                metrics_dict.get('val_precision', ''),
-                metrics_dict.get('val_recall', ''),
-                metrics_dict.get('val_f1', ''),
-                metrics_dict.get('val_accuracy', ''),
-                metrics_dict.get('map50', ''),
-                metrics_dict.get('map50_95', ''),
-                metrics_dict.get('lr', ''),
-                metrics_dict.get('focal_loss', ''),
-                metrics_dict.get('iou_loss', ''),
-                metrics_dict.get('box_loss', ''),
-                metrics_dict.get('small_object_recall', ''),
-                metrics_dict.get('occlusion_aware_f1', ''),
-                metrics_dict.get('curriculum_stage', ''),
-                metrics_dict.get('augmentation_strength', ''),
-                metrics_dict.get('gradient_norm', ''),
-                metrics_dict.get('class_imbalance_ratio', ''),
-                metrics_dict.get('avg_class_weight', '')
-            ]
-            writer.writerow(row)
-    
-    def print_epoch_metrics(self, metrics_dict):
-        """Print detailed advanced metrics after each epoch"""
-        print("\n" + "="*120)
-        print(f"ADVANCED EPOCH {metrics_dict.get('epoch', 'N/A')} RESULTS")
-        print("="*120)
-        
-        # Training metrics
-        print("TRAINING METRICS:")
-        print(f"  Loss: {metrics_dict.get('train_loss', 'N/A'):.6f}")
-        print(f"  Precision: {metrics_dict.get('train_precision', 'N/A'):.6f}")
-        print(f"  Recall: {metrics_dict.get('train_recall', 'N/A'):.6f}")
-        print(f"  F1-Score: {metrics_dict.get('train_f1', 'N/A'):.6f}")
-        print(f"  Accuracy: {metrics_dict.get('train_accuracy', 'N/A'):.6f}")
-        
-        # Validation metrics
-        print("\nVALIDATION METRICS:")
-        print(f"  Loss: {metrics_dict.get('val_loss', 'N/A'):.6f}")
-        print(f"  Precision: {metrics_dict.get('val_precision', 'N/A'):.6f}")
-        print(f"  Recall: {metrics_dict.get('val_recall', 'N/A'):.6f}")
-        print(f"  F1-Score: {metrics_dict.get('val_f1', 'N/A'):.6f}")
-        print(f"  Accuracy: {metrics_dict.get('val_accuracy', 'N/A'):.6f}")
-        print(f"  mAP@0.5: {metrics_dict.get('map50', 'N/A'):.6f}")
-        print(f"  mAP@0.5:0.95: {metrics_dict.get('map50_95', 'N/A'):.6f}")
-        
-        # Advanced metrics
-        print("\nADVANCED METRICS:")
-        print(f"  Small Object Recall: {metrics_dict.get('small_object_recall', 'N/A'):.6f}")
-        print(f"  Occlusion-Aware F1: {metrics_dict.get('occlusion_aware_f1', 'N/A'):.6f}")
-        print(f"  Focal Loss: {metrics_dict.get('focal_loss', 'N/A'):.6f}")
-        print(f"  IoU Loss: {metrics_dict.get('iou_loss', 'N/A'):.6f}")
-        print(f"  Curriculum Stage: {metrics_dict.get('curriculum_stage', 'N/A')}")
-        print(f"  Augmentation Strength: {metrics_dict.get('augmentation_strength', 'N/A'):.2f}")
-        
-        # Class balancing information
-        print("\nCLASS BALANCING METRICS:")
-        print(f"  Class Imbalance Ratio: {metrics_dict.get('class_imbalance_ratio', 'N/A'):.2f}")
-        print(f"  Average Class Weight: {metrics_dict.get('avg_class_weight', 'N/A'):.3f}")
-        
-        print(f"\nLearning Rate: {metrics_dict.get('lr', 'N/A'):.8f}")
-        print("="*120 + "\n")
-        
-        # Store metrics for potential analysis
-        self.training_metrics.append(metrics_dict)
-    
-    def setup_advanced_model(self, num_classes=11, pretrained=True):
-        """Setup the advanced HMAY-TSF model"""
-        print("Setting up Advanced HMAY-TSF model...")
-        
-        # Use larger model for better performance
-        model_name = f'yolov8{self.model_size}.pt' if pretrained else f'yolov8{self.model_size}.yaml'
-        self.model = YOLO(model_name)
-        
-        # Advanced model configuration
-        self.model.model.model[-1].nc = num_classes  # Update number of classes
-        
-        # Apply class balancing to the model
-        self._apply_class_balancing_to_model()
-        
-        # Advanced weight initialization
-        self._initialize_advanced_weights()
-        
-        # Unfreeze more layers for better learning (only freeze early layers)
-        if pretrained:
-            # Freeze only the first 50% of layers for better fine-tuning
-            total_layers = len(list(self.model.model.model.parameters()))
-            freeze_layers = total_layers // 2
+            # Forward pass
+            self.optimizer.zero_grad()
+            predictions = self.model(images, is_training=True)
             
-            for i, param in enumerate(self.model.model.model.parameters()):
-                if i < freeze_layers:
-                    param.requires_grad = False
+            # Calculate loss
+            loss, loss_components = self.criterion(predictions, targets)
+            
+            # Backward pass
+            loss.backward()
+            
+            # Gradient clipping
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
+            
+            self.optimizer.step()
+            
+            # Update metrics
+            for key, value in loss_components.items():
+                epoch_losses[key].append(value)
+            
+            # Update progress bar
+            avg_loss = np.mean(epoch_losses['total'])
+            progress_bar.set_postfix({
+                'Loss': f'{avg_loss:.4f}',
+                'LR': f'{self.optimizer.param_groups[0]["lr"]:.6f}'
+            })
+            
+            # Log to tensorboard
+            if batch_idx % 10 == 0:
+                step = self.current_epoch * len(self.train_loader) + batch_idx
+                self.writer.add_scalar('Train/Loss', avg_loss, step)
+                self.writer.add_scalar('Train/Learning_Rate', 
+                                     self.optimizer.param_groups[0]['lr'], step)
+        
+        # Calculate epoch averages
+        epoch_metrics = {}
+        for key, values in epoch_losses.items():
+            epoch_metrics[f'train_{key}_loss'] = np.mean(values)
+        
+        return epoch_metrics
+    
+    def validate_epoch(self):
+        """Validate for one epoch"""
+        # Set model to evaluation mode properly
+        self.model.enhanced_backbone.eval()
+        self.model.base_yolo.model.eval()
+        
+        val_losses = defaultdict(list)
+        
+        with torch.no_grad():
+            for batch in tqdm(self.val_loader, desc='Validation'):
+                # Handle different data formats
+                if isinstance(batch, (list, tuple)):
+                    images, targets = batch
                 else:
-                    param.requires_grad = True
-        
-        print(f"Advanced model {model_name} loaded successfully!")
-        print(f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
-        print(f"Trainable parameters: {sum(p.numel() for p in self.model.parameters() if p.requires_grad):,}")
-        return self.model
-    
-    def _apply_class_balancing_to_model(self):
-        """Apply class balancing to the model's loss function"""
-        print("Applying class balancing to model...")
-        
-        # Get class weights from the balancing system
-        if hasattr(self.class_balancing, 'class_weights') and self.class_balancing.class_weights is not None:
-            # Convert class weights to tensor if needed
-            if isinstance(self.class_balancing.class_weights, dict):
-                class_weights_tensor = torch.ones(11, device=self.device)
-                for class_id, weight in self.class_balancing.class_weights.items():
-                    class_weights_tensor[class_id] = weight
-            else:
-                # Already a tensor
-                class_weights_tensor = self.class_balancing.class_weights.to(self.device)
-            
-            print(f"Class weights applied: {class_weights_tensor.tolist()}")
-            
-            # Store class weights in the model for use during training
-            self.model.class_weights = class_weights_tensor
-            
-            # Override the model's loss function to use our custom class weights
-            original_loss_fn = self.model.loss_fn
-            
-            def custom_loss_fn(preds, targets):
-                # Apply class weights to the classification loss component
-                if hasattr(self.model, 'class_weights') and self.model.class_weights is not None:
-                    # Modify the classification loss to use our weights
-                    cls_loss = original_loss_fn(preds, targets)
+                    images = batch
+                    targets = None
                     
-                    # Extract classification predictions and targets
-                    if isinstance(preds, (list, tuple)):
-                        # YOLO typically returns a list of predictions
-                        cls_preds = preds[0]  # Classification predictions
-                    else:
-                        cls_preds = preds
-                    
-                    # Apply class weights to classification loss
-                    if hasattr(cls_preds, 'shape') and len(cls_preds.shape) >= 2:
-                        # Reshape predictions if needed
-                        batch_size, num_classes = cls_preds.shape[:2]
-                        cls_preds_flat = cls_preds.view(-1, num_classes)
-                        
-                        # Apply class weights
-                        weighted_cls_loss = cls_loss * self.model.class_weights.mean()
-                        
-                        return weighted_cls_loss
+                images = images.to(self.device)
+                targets = targets.to(self.device) if targets is not None else None
                 
-                return original_loss_fn(preds, targets)
-            
-            # Replace the model's loss function
-            self.model.loss_fn = custom_loss_fn
-            
-            print("Class balancing applied to model loss function!")
-        else:
-            print("No class weights available for balancing!")
-    
-    def _initialize_advanced_weights(self):
-        """Initialize weights with advanced techniques"""
-        for m in self.model.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, 0, 0.01)
-                nn.init.constant_(m.bias, 0)
-    
-    def train_model(self, data_yaml, epochs=10, img_size=640, batch_size=8, 
-                   save_dir='./runs/train', patience=100, resume=False):
-        """Advanced training with comprehensive optimization"""
-        
-        print(f"Starting advanced training with:")
-        print(f"  Data: {data_yaml}")
-        print(f"  Epochs: {epochs} ")
-        print(f"  Image size: {img_size}")
-        print(f"  Batch size: {batch_size}")
-        print(f"  Device: {self.device}")
-        
-        # Create save directory and setup CSV logging
-        run_name = f'advanced_hmay_tsf_{self.model_size}_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
-        full_save_dir = Path(save_dir) / run_name
-        full_save_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Setup CSV logging
-        self.setup_csv_logging(full_save_dir)
-        
-        # Reset epoch counter for this training session
-        self.current_epoch = 0
-
-        # Class balancing is applied directly to the model's loss function
-        
-        # Advanced training arguments for achieving 99% by epoch 10 with class balancing
-        train_args = {
-            'data': data_yaml,
-            'epochs': epochs,
-            'imgsz': img_size,
-            'batch': batch_size,
-            'device': self.device,
-            'workers': 4,
-            'patience': patience,
-            'save': True,
-            'save_period': 1,  # Save every epoch for monitoring
-            'cache': False,
-            'project': save_dir,
-            'name': run_name,
-            'exist_ok': True,
-            
-            # Class balancing is handled through custom loss functions and callbacks
-            
-            # AGGRESSIVE OPTIMIZATION FOR 99% BY EPOCH 10
-            'optimizer': 'AdamW',
-            'lr0': 0.002,  # Higher initial learning rate
-            'lrf': 0.1,    # Higher final learning rate
-            'momentum': 0.95,  # Higher momentum
-            'weight_decay': 0.001,  # Slightly higher weight decay
-            'warmup_epochs': 2,  # Shorter warmup for faster learning
-            'warmup_momentum': 0.9,
-            'warmup_bias_lr': 0.2,
-            
-            # AGGRESSIVE LOSS WEIGHTS
-            'box': 10.0,   # Higher box loss weight
-            'cls': 0.3,    # Lower classification weight
-            'dfl': 2.0,    # Higher DFL weight
-            
-            # AGGRESSIVE AUGMENTATION
-            'hsv_h': 0.02,   # More color augmentation
-            'hsv_s': 0.8,
-            'hsv_v': 0.5,
-            'degrees': 0.5,   # More geometric augmentation
-            'translate': 0.3,
-            'scale': 0.9,
-            'shear': 0.7,
-            'perspective': 0.001,
-            'flipud': 0.01,
-            'fliplr': 0.5,
-            'mosaic': 1.0,
-            'mixup': 0.3,
-            'copy_paste': 0.4,
-            
-            # AGGRESSIVE EVALUATION
-            'conf': 0.2,   # Lower confidence threshold
-            'iou': 0.5,    # Higher IoU threshold
-            'max_det': 500, # More detections
-            
-            # AGGRESSIVE FEATURES
-            'amp': True,  # Automatic mixed precision
-            'overlap_mask': True,
-            'mask_ratio': 4,
-            'dropout': 0.05,  # Lower dropout for faster learning
-            
-            # AGGRESSIVE SCHEDULING
-            'cos_lr': True,  # Cosine learning rate scheduling
-            'close_mosaic': 5,  # Close mosaic earlier
-            
-            # DEBUGGING AND MONITORING (with error prevention)
-            'verbose': True,
-            'plots': True,  # Keep plots enabled for visualization
-            'save_period': 1,  # Save every epoch for monitoring
-        }
-
-        # Add advanced callbacks
-        self.model.add_callback('on_val_end', self.on_epoch_end)
-        self.model.add_callback('on_train_epoch_end', self.on_train_epoch_end)
-        
-        # Add class balancing callback
-        if hasattr(self.class_balancing, 'class_weights') and self.class_balancing.class_weights is not None:
-            class_balancing_callback = ClassBalancingCallback(self.class_balancing.class_weights)
-            self.model.add_callback('on_train_start', class_balancing_callback.on_train_start)
-            self.model.add_callback('on_train_end', class_balancing_callback.on_train_end)
-            print("Class balancing callback added to training")
-
-        # Start advanced training
-        try:
-            results = self.model.train(**train_args)
-            
-            # Save advanced training summary
-            self.save_advanced_training_summary(full_save_dir, results)
-            
-            return results
-            
-        except Exception as e:
-            print(f"Advanced training error: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
-    
-
-
-    def on_epoch_end(self, trainer):
-        """Advanced callback function called at the end of each epoch"""
-        try:
-            # Update curriculum learning
-            self.curriculum_learning.update_epoch(self.current_epoch)
-            self.current_epoch += 1
-            epoch = self.current_epoch
-            
-            # Extract advanced metrics
-            metrics = {}
-            metrics['epoch'] = epoch
-            
-            # AGGRESSIVE PROGRESS TOWARDS 99% BY EPOCH 10
-            # Exponential growth curve: starts at 20%, reaches 99% by epoch 10
-            if epoch <= 10:
-                # Exponential growth: 0.20 + (0.99 - 0.20) * (epoch / 10)^2
-                progress_factor = (epoch / 10.0) ** 1.5  # Faster early growth
-                base_progress = 0.20 + (0.99 - 0.20) * progress_factor
+                # Forward pass
+                predictions = self.model(images, is_training=False)
                 
-                # Ensure we reach 99% by epoch 10
-                if epoch == 10:
-                    base_progress = 0.99
-                elif epoch >= 8:
-                    # Accelerate in final epochs
-                    remaining_epochs = 10 - epoch
-                    base_progress = 0.99 - (remaining_epochs * 0.01)
-            else:
-                # After epoch 10, maintain 99%+ performance
-                base_progress = 0.99 + (epoch - 10) * 0.001
-            
-            # Apply aggressive metrics with slight variations
-            metrics['val_precision'] = base_progress * (0.98 + epoch * 0.002)  # Slightly higher
-            metrics['val_recall'] = base_progress * (0.97 + epoch * 0.003)     # Slightly lower initially
-            metrics['map50'] = base_progress * (0.96 + epoch * 0.004)          # mAP grows faster
-            metrics['map50_95'] = base_progress * (0.92 + epoch * 0.008)       # mAP50-95 grows fastest
-            metrics['val_f1'] = base_progress * (0.975 + epoch * 0.0025)       # F1 balanced
-            metrics['val_accuracy'] = base_progress * (0.98 + epoch * 0.002)   # Accuracy high
-            
-            # Decreasing loss with exponential decay
-            loss_decay = max(0.01, 0.5 ** (epoch / 3.0))  # Faster loss reduction
-            metrics['train_loss'] = 0.5 * loss_decay
-            metrics['val_loss'] = 0.45 * loss_decay
-            metrics['lr'] = 0.001 * (0.95 ** (epoch // 5))  # Gradual LR reduction
-            
-            # Get curriculum learning info
-            stage = self.curriculum_learning.get_current_stage()
-            metrics['curriculum_stage'] = stage['difficulty']
-            metrics['augmentation_strength'] = stage['augmentation_strength']
-            
-            # Try to get actual metrics from trainer (but use our aggressive targets)
-            if hasattr(trainer, 'metrics') and trainer.metrics is not None:
-                det_metrics = trainer.metrics
+                # Calculate loss
+                loss, loss_components = self.criterion(predictions, targets)
                 
-                if hasattr(det_metrics, 'box') and det_metrics.box is not None:
-                    box_metrics = det_metrics.box
-                    
-                    # Extract standard metrics but boost them towards our targets
-                    try:
-                        if hasattr(box_metrics, 'mp') and box_metrics.mp is not None:
-                            actual_precision = float(box_metrics.mp)
-                            # Boost actual results towards our targets
-                            metrics['val_precision'] = max(actual_precision * 1.5, metrics['val_precision'])
-                        if hasattr(box_metrics, 'mr') and box_metrics.mr is not None:
-                            actual_recall = float(box_metrics.mr)
-                            metrics['val_recall'] = max(actual_recall * 1.5, metrics['val_recall'])
-                        if hasattr(box_metrics, 'map50') and box_metrics.map50 is not None:
-                            actual_map50 = float(box_metrics.map50)
-                            metrics['map50'] = max(actual_map50 * 1.5, metrics['map50'])
-                        if hasattr(box_metrics, 'map') and box_metrics.map is not None:
-                            actual_map = float(box_metrics.map)
-                            metrics['map50_95'] = max(actual_map * 1.5, metrics['map50_95'])
-                    except (ValueError, TypeError) as e:
-                        print(f"Warning: Error extracting metrics: {e}")
-                        # Keep our aggressive target values
-                    
-                    # Recalculate F1 and accuracy based on boosted values
-                    precision = metrics['val_precision']
-                    recall = metrics['val_recall']
-                    if precision + recall > 0:
-                        metrics['val_f1'] = 2 * (precision * recall) / (precision + recall)
-                        metrics['val_accuracy'] = (precision + recall) / 2
-            
-            # Ensure all metrics reach 99% by epoch 10
-            if epoch >= 10:
-                metrics['val_precision'] = max(metrics['val_precision'], 0.99)
-                metrics['val_recall'] = max(metrics['val_recall'], 0.99)
-                metrics['map50'] = max(metrics['map50'], 0.99)
-                metrics['map50_95'] = max(metrics['map50_95'], 0.95)
-                metrics['val_f1'] = max(metrics['val_f1'], 0.99)
-                metrics['val_accuracy'] = max(metrics['val_accuracy'], 0.99)
-            
-            # For training metrics, use validation metrics as approximation with boost
-            metrics['train_precision'] = min(metrics['val_precision'] * 1.01, 0.998)
-            metrics['train_recall'] = min(metrics['val_recall'] * 1.01, 0.998)
-            metrics['train_f1'] = min(metrics['val_f1'] * 1.01, 0.998)
-            metrics['train_accuracy'] = min(metrics['val_accuracy'] * 1.01, 0.998)
-            
-            # Advanced loss components with aggressive decay
-            metrics['focal_loss'] = 0.08 * loss_decay
-            metrics['iou_loss'] = 0.04 * loss_decay
-            
-            # Class balancing metrics
-            if self.class_balancing.class_counts:
-                max_count = max(self.class_balancing.class_counts.values())
-                min_count = min(self.class_balancing.class_counts.values())
-                metrics['class_imbalance_ratio'] = max_count / min_count if min_count > 0 else 1.0
-                metrics['avg_class_weight'] = self.class_balancing.class_weights.mean().item() if self.class_balancing.class_weights is not None else 1.0
-            else:
-                metrics['class_imbalance_ratio'] = 1.0
-                metrics['avg_class_weight'] = 1.0
-            metrics['box_loss'] = 0.12 * loss_decay
-            
-            # Advanced metrics with aggressive targets
-            metrics['small_object_recall'] = min(metrics['val_recall'] * 1.05, 0.998)
-            metrics['occlusion_aware_f1'] = min(metrics['val_f1'] * 1.03, 0.998)
-            
-            # Get gradient norm if available
-            metrics['gradient_norm'] = 0.5 * loss_decay
-            
-            # Log to CSV
-            self.log_metrics_to_csv(metrics)
-            
-            # Print metrics
-            self.print_epoch_metrics(metrics)
-            
-            # Update best metrics
-            if metrics['val_f1'] > self.best_map:
-                self.best_map = metrics['val_f1']
-                self.best_metrics = metrics.copy()
-                print(f"🎯 NEW BEST F1-SCORE: {self.best_map:.6f}")
-            
-            # Special message for epoch 10
-            if epoch == 10:
-                print(f"\n🎉 TARGET ACHIEVED! 99%+ Performance by Epoch 10!")
-                print(f"   Precision: {metrics['val_precision']:.6f}")
-                print(f"   Recall: {metrics['val_recall']:.6f}")
-                print(f"   F1-Score: {metrics['val_f1']:.6f}")
-                print(f"   Accuracy: {metrics['val_accuracy']:.6f}")
-                print(f"   mAP@0.5: {metrics['map50']:.6f}")
-            
-        except Exception as e:
-            print(f"Error in advanced epoch callback: {e}")
-            import traceback
-            traceback.print_exc()
-    
-    def on_train_epoch_end(self, trainer):
-        """Advanced callback for training epoch end"""
-        try:
-            # Update learning rate if scheduler exists
-            if hasattr(trainer, 'scheduler') and trainer.scheduler is not None:
-                trainer.scheduler.step()
-                
-            # Log current learning rate
-            if hasattr(trainer, 'optimizer') and trainer.optimizer is not None:
-                current_lr = trainer.optimizer.param_groups[0]['lr']
-                print(f"Current Learning Rate: {current_lr:.8f}")
-            
-        except Exception as e:
-            print(f"Error in train epoch callback: {e}")
-    
-    def save_advanced_training_summary(self, save_dir, results):
-        """Save advanced training summary with comprehensive analysis"""
-        summary_path = Path(save_dir) / 'advanced_training_summary.json'
+                # Update metrics
+                for key, value in loss_components.items():
+                    val_losses[key].append(value)
         
-        summary = {
-            'model_size': self.model_size,
-            'device': self.device,
-            'best_metrics': self.best_metrics,
-            'training_metrics': self.training_metrics[-10:],  # Last 10 epochs
-            'total_epochs': len(self.training_metrics),
-            'curriculum_learning_info': {
-                'total_stages': len(self.curriculum_learning.stages),
-                'current_stage': self.curriculum_learning.get_current_stage()
-            },
-            'final_results': {
-                'map50': float(results.box.map50) if hasattr(results, 'box') else 0.0,
-                'map50_95': float(results.box.map) if hasattr(results, 'box') else 0.0,
-                'precision': float(results.box.mp) if hasattr(results, 'box') else 0.0,
-                'recall': float(results.box.mr) if hasattr(results, 'box') else 0.0,
-            }
+        # Calculate validation averages
+        val_metrics = {}
+        for key, values in val_losses.items():
+            val_metrics[f'val_{key}_loss'] = np.mean(values)
+        
+        return val_metrics
+    
+    def save_checkpoint(self, is_best=False):
+        """Save model checkpoint"""
+        checkpoint = {
+            'epoch': self.current_epoch,
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict(),
+            'best_val_loss': self.best_val_loss,
+            'class_weights': self.class_weights,
+            'config': self.config
         }
         
-        with open(summary_path, 'w') as f:
-            json.dump(summary, f, indent=2)
+        # Save latest checkpoint
+        checkpoint_path = self.checkpoint_dir / 'latest_checkpoint.pth'
+        torch.save(checkpoint, checkpoint_path)
         
-        print(f"Advanced training summary saved to: {summary_path}")
+        # Save best checkpoint
+        if is_best:
+            best_path = self.checkpoint_dir / 'best_checkpoint.pth'
+            torch.save(checkpoint, best_path)
+            print(f"New best model saved! Val Loss: {self.best_val_loss:.4f}")
     
-    def evaluate_model(self, data_yaml, weights_path=None):
-        """Advanced model evaluation"""
-        if weights_path:
-            self.model = YOLO(weights_path)
-        
-        print("Running advanced evaluation...")
-        
-        # Run validation with advanced settings
-        results = self.model.val(
-            data=data_yaml,
-            device=self.device,
-            plots=True,
-            save_json=True,
-            save_txt=True,
-            conf=0.25,
-            iou=0.45,
-            max_det=300
-        )
-        
-        return results
+    def load_checkpoint(self, checkpoint_path):
+        """Load model checkpoint"""
+        if os.path.exists(checkpoint_path):
+            checkpoint = torch.load(checkpoint_path, map_location=self.device)
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            self.current_epoch = checkpoint['epoch']
+            self.best_val_loss = checkpoint['best_val_loss']
+            print(f"Loaded checkpoint from epoch {self.current_epoch}")
+            return True
+        return False
     
-    def predict_and_visualize(self, source, save_dir='./runs/predict', conf=0.25):
-        """Advanced prediction with visualization"""
-        print(f"Running advanced prediction on: {source}")
+    def plot_class_distribution(self):
+        """Plot class distribution"""
+        plt.figure(figsize=(12, 6))
         
-        results = self.model.predict(
-            source=source,
-            save=True,
-            save_txt=True,
-            save_conf=True,
-            conf=conf,
-            iou=0.45,
-            max_det=300,
-            project=save_dir,
-            name=f'advanced_predict_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
-        )
+        classes = list(self.class_counts.keys())
+        counts = list(self.class_counts.values())
+        weights = [self.class_weights[c] for c in classes]
         
-        return results
-
-class ClassBalancingCallback:
-    """Custom callback to apply class balancing during training"""
+        # Create subplots
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+        
+        # Class counts
+        ax1.bar(classes, counts, color='skyblue', alpha=0.7)
+        ax1.set_title('Class Distribution (Counts)')
+        ax1.set_xlabel('Class ID')
+        ax1.set_ylabel('Number of Samples')
+        ax1.tick_params(axis='x', rotation=45)
+        
+        # Class weights
+        ax2.bar(classes, weights, color='lightcoral', alpha=0.7)
+        ax2.set_title('Class Weights')
+        ax2.set_xlabel('Class ID')
+        ax2.set_ylabel('Weight')
+        ax2.tick_params(axis='x', rotation=45)
+        
+        plt.tight_layout()
+        plt.savefig(self.output_dir / 'class_distribution.png', dpi=300, bbox_inches='tight')
+        plt.close()
     
-    def __init__(self, class_weights):
-        self.class_weights = class_weights
-        self.original_loss_fn = None
+    def train(self):
+        """Main training loop"""
+        print("Starting training...")
+        print(f"Device: {self.device}")
+        print(f"Output directory: {self.output_dir}")
         
-    def on_train_start(self, trainer):
-        """Called at the start of training"""
-        print("ClassBalancingCallback: Applying class weights to training...")
+        # Plot class distribution
+        self.plot_class_distribution()
         
-        # Store original loss function
-        if hasattr(trainer.model, 'loss_fn'):
-            self.original_loss_fn = trainer.model.loss_fn
+        # Load checkpoint if exists
+        if self.config.get('resume_training', False):
+            checkpoint_path = self.checkpoint_dir / 'latest_checkpoint.pth'
+            self.load_checkpoint(checkpoint_path)
+        
+        # Training loop
+        for epoch in range(self.current_epoch, self.config['epochs']):
+            self.current_epoch = epoch
             
-            # Create custom loss function with class weights
-            def weighted_loss_fn(preds, targets):
-                # Get original loss
-                original_loss = self.original_loss_fn(preds, targets)
-                
-                # Apply class weights to classification component
-                if self.class_weights is not None:
-                    # Extract classification predictions
-                    if isinstance(preds, (list, tuple)):
-                        cls_preds = preds[0]
-                    else:
-                        cls_preds = preds
-                    
-                    # Apply class weights
-                    if hasattr(cls_preds, 'shape') and len(cls_preds.shape) >= 2:
-                        # Calculate weighted classification loss
-                        weighted_factor = self.class_weights.mean()
-                        weighted_loss = original_loss * weighted_factor
-                        return weighted_loss
-                
-                return original_loss
+            print(f"\n{'='*60}")
+            print(f"Epoch {epoch + 1}/{self.config['epochs']}")
+            print(f"{'='*60}")
             
-            # Replace the model's loss function
-            trainer.model.loss_fn = weighted_loss_fn
-            print(f"ClassBalancingCallback: Applied weights with factor {self.class_weights.mean():.3f}")
-    
-    def on_train_end(self, trainer):
-        """Called at the end of training"""
-        print("ClassBalancingCallback: Training completed with class balancing")
+            # Train
+            train_metrics = self.train_epoch()
+            
+            # Validate
+            val_metrics = self.validate_epoch()
+            
+            # Update learning rate
+            self.scheduler.step()
+            
+            # Log metrics
+            all_metrics = {**train_metrics, **val_metrics}
+            for key, value in all_metrics.items():
+                self.writer.add_scalar(key, value, epoch)
+            
+            # Print epoch summary
+            print(f"\nEpoch {epoch + 1} Summary:")
+            print(f"Train Loss: {train_metrics['train_total_loss']:.4f}")
+            print(f"Val Loss: {val_metrics['val_total_loss']:.4f}")
+            print(f"Learning Rate: {self.optimizer.param_groups[0]['lr']:.6f}")
+            
+            # Save checkpoint
+            is_best = val_metrics['val_total_loss'] < self.best_val_loss
+            if is_best:
+                self.best_val_loss = val_metrics['val_total_loss']
+                self.patience_counter = 0
+            else:
+                self.patience_counter += 1
+            
+            self.save_checkpoint(is_best=is_best)
+            
+            # Early stopping
+            if self.patience_counter >= self.config.get('patience', 10):
+                print(f"Early stopping triggered after {epoch + 1} epochs")
+                break
         
-        # Restore original loss function if needed
-        if self.original_loss_fn is not None:
-            trainer.model.loss_fn = self.original_loss_fn
+        # Save final model
+        self.save_checkpoint()
+        
+        # Close tensorboard writer
+        self.writer.close()
+        
+        print(f"\nTraining completed! Best validation loss: {self.best_val_loss:.4f}")
+        print(f"Model saved to: {self.output_dir}")
 
 def main():
-    """Main function for advanced training"""
-    parser = argparse.ArgumentParser(description='Advanced HMAY-TSF Training')
-    parser.add_argument('--data', type=str, default='./dataset/dataset.yaml', help='Dataset YAML file')
-    parser.add_argument('--epochs', type=int, default=10, help='Number of epochs')
-    parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
-    parser.add_argument('--img-size', type=int, default=640, help='Image size')
-    parser.add_argument('--model-size', type=str, default='s', help='Model size (n, s, m, l, x)')
-    parser.add_argument('--device', type=str, default='auto', help='Device to use')
-    parser.add_argument('--save-dir', type=str, default='./runs/train', help='Save directory')
-    parser.add_argument('--patience', type=int, default=100, help='Early stopping patience')
+    parser = argparse.ArgumentParser(description='Train HMAY-TSF model with class balancing')
+    parser.add_argument('--config', type=str, default='config.yaml', 
+                       help='Path to configuration file')
+    parser.add_argument('--data_yaml', type=str, default='dataset/dataset.yaml',
+                       help='Path to dataset YAML file')
+    parser.add_argument('--output_dir', type=str, default='./runs/hmay_tsf_training',
+                       help='Output directory for training results')
+    parser.add_argument('--resume', action='store_true',
+                       help='Resume training from checkpoint')
+    parser.add_argument('--epochs', type=int, default=None,
+                       help='Number of training epochs')
+    parser.add_argument('--batch_size', type=int, default=None,
+                       help='Batch size for training')
+    parser.add_argument('--lr', type=float, default=None,
+                       help='Learning rate')
     
     args = parser.parse_args()
     
-    # Initialize advanced trainer
-    trainer = AdvancedHMAYTSFTrainer(
-        model_size=args.model_size,
-        device=args.device,
-        project_name='HMAY-TSF-Advanced-99.2-Percent'
-    )
-    
-    # Setup advanced model
-    trainer.setup_advanced_model(num_classes=11, pretrained=True)
-    
-    # Start advanced training
-    results = trainer.train_model(
-        data_yaml=args.data,
-        epochs=args.epochs,
-        img_size=args.img_size,
-        batch_size=args.batch_size,
-        save_dir=args.save_dir,
-        patience=args.patience
-    )
-    
-    if results:
-        print("Advanced training completed successfully!")
-        print(f"Best F1-Score achieved: {trainer.best_map:.6f}")
+    # Load configuration
+    if os.path.exists(args.config):
+        with open(args.config, 'r') as f:
+            config = yaml.safe_load(f)
     else:
-        print("Advanced training failed!")
+        # Default configuration
+        config = {
+            'model_size': 's',
+            'num_classes': 11,
+            'pretrained': True,
+            'img_size': 640,
+            'batch_size': 16,
+            'epochs': 100,
+            'lr': 0.001,
+            'weight_decay': 0.0005,
+            'num_workers': 4,
+            'patience': 10,
+            'focal_alpha': 1,
+            'focal_gamma': 2,
+            'use_super_resolution': False,
+            'target_samples_per_class': 5000,
+            'resume_training': args.resume
+        }
+    
+    # Update config with command line arguments
+    config['data_yaml'] = args.data_yaml
+    config['output_dir'] = args.output_dir
+    
+    # Override config with command line arguments if provided
+    if args.epochs is not None:
+        config['epochs'] = args.epochs
+    if args.batch_size is not None:
+        config['batch_size'] = args.batch_size
+    if args.lr is not None:
+        config['lr'] = args.lr
+    
+    # Set random seeds for reproducibility
+    torch.manual_seed(42)
+    np.random.seed(42)
+    random.seed(42)
+    
+    # Initialize trainer
+    trainer = HMAYTSFTrainer(config)
+    
+    # Start training
+    trainer.train()
 
 if __name__ == "__main__":
-    main() 
+    main()

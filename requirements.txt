@@ -1,91 +1,37 @@
-# HMAY-TSF Requirements
-# Complete implementation for achieving 99%+ performance by epoch 10
-
-# Core deep learning framework
+# Core PyTorch
 torch>=2.0.0
 torchvision>=0.15.0
+torchaudio>=2.0.0
 
-# YOLO framework
+# YOLO and Computer Vision
 ultralytics>=8.0.0
-
-# Computer vision
 opencv-python>=4.8.0
-Pillow>=10.0.0
+Pillow>=9.0.0
 
-# Data processing and augmentation
+# Data Processing and Augmentation
 albumentations>=1.3.0
 numpy>=1.24.0
 pandas>=2.0.0
 
-# Machine learning utilities
-scikit-learn>=1.3.0
-scipy>=1.11.0
-
-# Visualization
+# Visualization and Plotting
 matplotlib>=3.7.0
 seaborn>=0.12.0
-
-# Progress tracking
-tqdm>=4.65.0
-
-# Configuration and utilities
-PyYAML>=6.0
-
-# Enhanced model architectures
-timm>=0.9.0
 tensorboard>=2.13.0
 
-# Advanced HMAY-TSF specific requirements
-# For temporal-spatial fusion
-einops>=0.6.0
-# For advanced attention mechanisms
-transformers>=4.30.0
-# For curriculum learning
-accelerate>=0.20.0
-# For advanced data augmentation
-imgaug>=0.4.0
-# For super-resolution
-basicsr>=1.4.0
-# For advanced metrics
-pycocotools>=2.0.0
-# For advanced image processing
-kornia>=0.6.0
-# For advanced evaluation
-pycocoevalcap>=1.0.0
-# For advanced deployment
-onnx>=1.14.0
-onnxruntime>=1.15.0
-# For advanced monitoring
-mlflow>=2.4.0
-# For advanced optimization
-optuna>=3.0.0
-# For advanced data handling
-h5py>=3.8.0
-# For advanced testing
-pytest>=7.3.0
-pytest-cov>=4.1.0
-# For advanced documentation
-sphinx>=6.0.0
-sphinx-rtd-theme>=1.2.0
-# For advanced visualization
-bokeh>=3.0.0
-# For advanced logging
-tensorboardX>=2.6.0
-# For advanced data validation
-great-expectations>=0.17.0
-# For advanced utilities
-requests>=2.31.0
-colorama>=0.4.6
-loguru>=0.7.0
-rich>=13.0.0
+# Machine Learning
+scikit-learn>=1.3.0
+scipy>=1.10.0
+
+# Utilities
+tqdm>=4.65.0
+PyYAML>=6.0
 psutil>=5.9.0
-GPUtil>=1.4.0
-imageio>=2.31.0
-imageio-ffmpeg>=0.4.8
-pydantic>=2.0.0
-py-spy>=0.3.0
-pathlib2>=2.3.0
-torch-optimizer>=0.3.0
-pytorch-lightning>=2.0.0
-plotly>=5.15.0
-wandb>=0.15.0 
+
+# Optional: For advanced features
+timm>=0.9.0  # For additional model architectures
+einops>=0.6.0  # For advanced tensor operations
+
+# Development and Testing
+pytest>=7.0.0
+black>=23.0.0
+flake8>=6.0.0 
