@@ -63,26 +63,6 @@ pip install -r requirements.txt
 python quick_start.py --mode demo
 ```
 
-### Dataset Balancing (Recommended First Step)
-```bash
-# Balance dataset for equal class distribution
-python run_balance_dataset.py
-
-# Or use the advanced balancing script
-python balance_dataset.py --dataset-path ./dataset --output-path ./dataset_balanced
-
-# Test the balancing functionality first
-python test_balance.py
-
-# This will:
-# 1. Analyze current class distribution (e.g., bicycle: 186,693, tricycle: 4,377)
-# 2. Create balanced dataset with equal instances per class
-# 3. Filter annotations to achieve exact balance
-# 4. Generate visualizations and comprehensive reports
-# 5. Create new dataset.yaml for balanced dataset
-# 6. Verify balance quality with coefficient of variation
-```
-
 ### Training (99% by Epoch 10) ✅ PROVEN
 ```bash
 # Start training for 99% performance by epoch 10
