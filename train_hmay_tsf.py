@@ -30,6 +30,20 @@ warnings.filterwarnings('ignore')
 from hmay_tsf_model_simple import HMAY_TSF
 from data_preparation import VisDroneDataset, ClassBalancedAugmentation
 
+# Custom collate function for variable length bboxes
+def custom_collate(batch):
+    images = torch.stack([item['image'] for item in batch])
+    bboxes = [item['bboxes'] for item in batch]
+    class_labels = [item['class_labels'] for item in batch]
+    img_paths = [item['img_path'] for item in batch]
+    
+    return {
+        'image': images,
+        'bboxes': bboxes,
+        'class_labels': class_labels,
+        'img_path': img_paths
+    }
+
 class FocalLoss(nn.Module):
     """Focal Loss for addressing class imbalance in object detection"""
     def __init__(self, alpha=1, gamma=2, reduction='mean'):
@@ -293,7 +307,8 @@ class HMAYTSFTrainer:
             sampler=self.balanced_sampler.get_sampler(),
             num_workers=self.config['num_workers'],
             pin_memory=True,
-            drop_last=True
+            drop_last=True,
+            collate_fn=custom_collate
         )
         
         self.val_loader = DataLoader(
@@ -301,7 +316,8 @@ class HMAYTSFTrainer:
             batch_size=self.config['batch_size'],
             shuffle=False,
             num_workers=self.config['num_workers'],
-            pin_memory=True
+            pin_memory=True,
+            collate_fn=custom_collate
         )
         
         print(f"Train samples: {len(train_dataset)}")

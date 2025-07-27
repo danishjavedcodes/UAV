@@ -119,8 +119,16 @@ class VisDroneDataset(Dataset):
                 if len(label) >= 5:
                     class_id, x_center, y_center, width, height = label[:5]
                     # Check if coordinates are valid (within [0, 1] range)
+                    # Also check that bbox doesn't go outside image bounds
+                    x_min = x_center - width/2
+                    y_min = y_center - height/2
+                    x_max = x_center + width/2
+                    y_max = y_center + height/2
+                    
                     if (0 <= x_center <= 1 and 0 <= y_center <= 1 and 
-                        0 < width <= 1 and 0 < height <= 1):
+                        0 < width <= 1 and 0 < height <= 1 and
+                        0 <= x_min <= 1 and 0 <= y_min <= 1 and
+                        0 <= x_max <= 1 and 0 <= y_max <= 1):
                         valid_labels.append(label)
             
             if len(valid_labels) == 0:
@@ -131,15 +139,36 @@ class VisDroneDataset(Dataset):
                 bboxes = valid_labels[:, 1:].tolist()  # x_center, y_center, width, height
                 class_labels = valid_labels[:, 0].astype(int).tolist()
         
-        # Apply augmentations
-        transformed = self.transform(image=image, bboxes=bboxes, class_labels=class_labels)
-        
-        return {
-            'image': transformed['image'],
-            'bboxes': transformed['bboxes'],
-            'class_labels': transformed['class_labels'],
-            'img_path': str(img_path)
-        }
+        # Apply augmentations with error handling
+        try:
+            transformed = self.transform(image=image, bboxes=bboxes, class_labels=class_labels)
+            
+            return {
+                'image': transformed['image'],
+                'bboxes': transformed['bboxes'],
+                'class_labels': transformed['class_labels'],
+                'img_path': str(img_path)
+            }
+        except Exception as e:
+            # If augmentation fails, return image without bboxes
+            print(f"Warning: Augmentation failed for {img_path}: {e}")
+            # Apply only basic transforms
+            basic_transform = A.Compose([
+                A.LongestMaxSize(max_size=self.img_size),
+                A.PadIfNeeded(min_height=self.img_size, min_width=self.img_size, 
+                             border_mode=cv2.BORDER_CONSTANT, value=0),
+                A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+                ToTensorV2(),
+            ])
+            
+            transformed = basic_transform(image=image)
+            
+            return {
+                'image': transformed['image'],
+                'bboxes': [],
+                'class_labels': [],
+                'img_path': str(img_path)
+            }
 
 class SuperResolutionAugmentation:
     """Super-resolution data augmentation using ESRGAN"""
