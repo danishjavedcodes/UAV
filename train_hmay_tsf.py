@@ -1,6 +1,7 @@
 """
 Enhanced Training Script for HMAY-TSF Model
 Complete implementation with advanced training strategies for achieving 99.2%+ accuracy, precision, recall, and F1 score
+Includes comprehensive dataset balancing for equal class distribution
 """
 
 import os
@@ -21,14 +22,438 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import cv2
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, OneCycleLR, ReduceLROnPlateau
 import torch.cuda.amp as amp
 import math
+import random
+from collections import defaultdict, Counter
+import shutil
+from PIL import Image
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 from hmay_tsf_model import HMAY_TSF, prepare_visdrone_dataset
 from data_preparation import prepare_visdrone_dataset as prep_dataset, get_dataloader
+
+class DatasetBalancer:
+    """Advanced dataset balancing for equal class distribution"""
+    
+    def __init__(self, dataset_path='./dataset', target_samples_per_class=None):
+        self.dataset_path = Path(dataset_path)
+        self.target_samples_per_class = target_samples_per_class
+        self.class_names = {
+            0: 'ignored regions', 1: 'pedestrian', 2: 'people', 3: 'bicycle',
+            4: 'car', 5: 'van', 6: 'truck', 7: 'tricycle', 8: 'awning-tricycle',
+            9: 'bus', 10: 'motor'
+        }
+        
+        # Balanced dataset paths
+        self.balanced_dataset_path = self.dataset_path / 'balanced_dataset'
+        self.balanced_images_path = self.balanced_dataset_path / 'images' / 'train'
+        self.balanced_labels_path = self.balanced_dataset_path / 'labels' / 'train'
+        
+        print("Initializing Dataset Balancer...")
+    
+    def analyze_class_distribution(self, split='train'):
+        """Analyze current class distribution in the dataset"""
+        print(f"Analyzing class distribution for {split} split...")
+        
+        images_dir = self.dataset_path / 'images' / split
+        labels_dir = self.dataset_path / 'labels' / split
+        
+        if not images_dir.exists() or not labels_dir.exists():
+            print(f"Error: {split} directory not found!")
+            return None
+        
+        # Collect all image-label pairs
+        image_files = list(images_dir.glob('*.jpg'))
+        class_counts = defaultdict(int)
+        image_class_mapping = defaultdict(list)
+        
+        total_annotations = 0
+        
+        for img_file in image_files:
+            label_file = labels_dir / f"{img_file.stem}.txt"
+            if label_file.exists():
+                with open(label_file, 'r') as f:
+                    classes_in_image = []
+                    for line in f.readlines():
+                        if line.strip():
+                            parts = line.strip().split()
+                            if len(parts) == 5:
+                                class_id = int(parts[0])
+                                class_counts[class_id] += 1
+                                classes_in_image.append(class_id)
+                                total_annotations += 1
+                    
+                    # Store image with its classes
+                    if classes_in_image:
+                        for class_id in set(classes_in_image):  # Unique classes per image
+                            image_class_mapping[class_id].append(img_file)
+        
+        # Create detailed analysis
+        analysis = {
+            'class_counts': dict(class_counts),
+            'image_class_mapping': dict(image_class_mapping),
+            'total_annotations': total_annotations,
+            'total_images': len(image_files),
+            'images_with_annotations': len([f for f in image_files if (labels_dir / f"{f.stem}.txt").exists()])
+        }
+        
+        # Print analysis
+        print(f"\n=== CLASS DISTRIBUTION ANALYSIS ({split.upper()}) ===")
+        print(f"Total images: {analysis['total_images']}")
+        print(f"Images with annotations: {analysis['images_with_annotations']}")
+        print(f"Total annotations: {total_annotations}")
+        print("\nClass distribution:")
+        print("-" * 60)
+        print(f"{'Class ID':<8} {'Class Name':<20} {'Count':<8} {'Percentage':<12}")
+        print("-" * 60)
+        
+        for class_id in sorted(class_counts.keys()):
+            count = class_counts[class_id]
+            percentage = (count / total_annotations) * 100 if total_annotations > 0 else 0
+            class_name = self.class_names.get(class_id, f'Unknown-{class_id}')
+            print(f"{class_id:<8} {class_name:<20} {count:<8} {percentage:<12.2f}%")
+        
+        # Find the most common class count
+        if class_counts:
+            max_count = max(class_counts.values())
+            min_count = min(class_counts.values())
+            print(f"\nMost common class: {max_count} instances")
+            print(f"Least common class: {min_count} instances")
+            print(f"Imbalance ratio: {max_count / min_count:.2f}:1")
+        
+        return analysis
+    
+    def determine_target_samples(self, analysis):
+        """Determine target number of samples per class for balancing"""
+        if self.target_samples_per_class:
+            return self.target_samples_per_class
+        
+        # Strategy: Use the median class count as target, but ensure minimum
+        class_counts = list(analysis['class_counts'].values())
+        if not class_counts:
+            return 1000  # Default target
+        
+        median_count = np.median(class_counts)
+        min_target = max(median_count, 500)  # Ensure minimum 500 samples per class
+        
+        print(f"\nTarget samples per class: {min_target}")
+        return int(min_target)
+    
+    def create_balanced_dataset(self, target_samples_per_class=None):
+        """Create a balanced dataset with equal class distribution"""
+        print("\n=== CREATING BALANCED DATASET ===")
+        
+        # Analyze current distribution
+        analysis = self.analyze_class_distribution('train')
+        if not analysis:
+            return None
+        
+        # Determine target samples
+        target_samples = target_samples_per_class or self.determine_target_samples(analysis)
+        
+        # Create balanced dataset directory
+        self.balanced_dataset_path.mkdir(parents=True, exist_ok=True)
+        self.balanced_images_path.mkdir(parents=True, exist_ok=True)
+        self.balanced_labels_path.mkdir(parents=True, exist_ok=True)
+        
+        # Copy validation and test sets as-is
+        for split in ['val', 'test']:
+            src_images = self.dataset_path / 'images' / split
+            src_labels = self.dataset_path / 'labels' / split
+            dst_images = self.balanced_dataset_path / 'images' / split
+            dst_labels = self.balanced_dataset_path / 'labels' / split
+            
+            if src_images.exists() and src_labels.exists():
+                dst_images.mkdir(parents=True, exist_ok=True)
+                dst_labels.mkdir(parents=True, exist_ok=True)
+                
+                # Copy images
+                for img_file in src_images.glob('*.jpg'):
+                    shutil.copy2(img_file, dst_images / img_file.name)
+                
+                # Copy labels
+                for label_file in src_labels.glob('*.txt'):
+                    shutil.copy2(label_file, dst_labels / label_file.name)
+                
+                print(f"Copied {split} set: {len(list(src_images.glob('*.jpg')))} images")
+        
+        # Balance training set
+        balanced_images = []
+        balanced_labels = []
+        
+        for class_id in range(11):  # 11 classes
+            class_name = self.class_names[class_id]
+            current_count = analysis['class_counts'].get(class_id, 0)
+            target_count = target_samples
+            
+            print(f"\nBalancing class {class_id} ({class_name}):")
+            print(f"  Current: {current_count}, Target: {target_count}")
+            
+            if current_count == 0:
+                print(f"  Warning: No samples for class {class_id}")
+                continue
+            
+            # Get images containing this class
+            class_images = analysis['image_class_mapping'].get(class_id, [])
+            
+            if not class_images:
+                print(f"  Warning: No images found for class {class_id}")
+                continue
+            
+            # Calculate how many times to use each image
+            if current_count >= target_count:
+                # Oversampling: randomly select target_count samples
+                selected_images = random.sample(class_images, min(target_count, len(class_images)))
+                # If we need more, repeat some images
+                while len(selected_images) < target_count:
+                    selected_images.extend(random.sample(class_images, min(target_count - len(selected_images), len(class_images))))
+                selected_images = selected_images[:target_count]
+            else:
+                # Undersampling: use all available images, then augment
+                selected_images = class_images.copy()
+                # Augment to reach target
+                while len(selected_images) < target_count:
+                    selected_images.extend(random.sample(class_images, min(target_count - len(selected_images), len(class_images))))
+                selected_images = selected_images[:target_count]
+            
+            # Process selected images
+            for i, img_file in enumerate(selected_images):
+                label_file = self.dataset_path / 'labels' / 'train' / f"{img_file.stem}.txt"
+                
+                if i < len(class_images):  # Original image
+                    # Copy original
+                    new_img_name = f"{img_file.stem}_class{class_id}_orig_{i:04d}.jpg"
+                    new_label_name = f"{img_file.stem}_class{class_id}_orig_{i:04d}.txt"
+                else:
+                    # Augmented image
+                    new_img_name = f"{img_file.stem}_class{class_id}_aug_{i:04d}.jpg"
+                    new_label_name = f"{img_file.stem}_class{class_id}_aug_{i:04d}.txt"
+                
+                # Copy image
+                dst_img_path = self.balanced_images_path / new_img_name
+                shutil.copy2(img_file, dst_img_path)
+                
+                # Copy and potentially modify label
+                if label_file.exists():
+                    dst_label_path = self.balanced_labels_path / new_label_name
+                    shutil.copy2(label_file, dst_label_path)
+                    
+                    # If this is an augmented image, apply augmentation
+                    if i >= len(class_images):
+                        self._augment_image_and_label(dst_img_path, dst_label_path, class_id)
+                
+                balanced_images.append(new_img_name)
+                balanced_labels.append(new_label_name)
+            
+            print(f"  Added {len(selected_images)} samples for class {class_id}")
+        
+        # Create balanced dataset YAML
+        self._create_balanced_dataset_yaml()
+        
+        # Verify balance
+        self._verify_balance()
+        
+        print(f"\nBalanced dataset created at: {self.balanced_dataset_path}")
+        print(f"Total balanced training images: {len(balanced_images)}")
+        
+        return str(self.balanced_dataset_path / 'dataset.yaml')
+    
+    def _augment_image_and_label(self, img_path, label_path, target_class_id):
+        """Apply augmentation to image and label for balancing"""
+        try:
+            # Load image
+            image = cv2.imread(str(img_path))
+            if image is None:
+                return
+            
+            # Load labels
+            labels = []
+            if label_path.exists():
+                with open(label_path, 'r') as f:
+                    for line in f.readlines():
+                        if line.strip():
+                            parts = line.strip().split()
+                            if len(parts) == 5:
+                                labels.append([int(parts[0])] + [float(x) for x in parts[1:]])
+            
+            # Apply augmentation
+            augmented = self._apply_balancing_augmentation(image, labels, target_class_id)
+            
+            if augmented is not None:
+                aug_image, aug_labels = augmented
+                
+                # Save augmented image
+                cv2.imwrite(str(img_path), aug_image)
+                
+                # Save augmented labels
+                with open(label_path, 'w') as f:
+                    for label in aug_labels:
+                        f.write(f"{int(label[0])} {label[1]:.6f} {label[2]:.6f} {label[3]:.6f} {label[4]:.6f}\n")
+        
+        except Exception as e:
+            print(f"Error augmenting {img_path}: {e}")
+    
+    def _apply_balancing_augmentation(self, image, labels, target_class_id):
+        """Apply targeted augmentation for balancing"""
+        try:
+            # Create augmentation pipeline
+            transform = A.Compose([
+                A.OneOf([
+                    A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, p=0.7),
+                    A.HueSaturationValue(hue_shift_limit=20, sat_shift_limit=30, val_shift_limit=20, p=0.7),
+                    A.CLAHE(clip_limit=2.0, tile_grid_size=(8, 8), p=0.5),
+                ], p=0.8),
+                A.OneOf([
+                    A.GaussNoise(var_limit=(10.0, 50.0), p=0.5),
+                    A.GaussianBlur(blur_limit=(3, 7), p=0.5),
+                    A.MotionBlur(blur_limit=7, p=0.3),
+                ], p=0.4),
+                A.OneOf([
+                    A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.2, rotate_limit=15, p=0.7),
+                    A.ElasticTransform(alpha=1, sigma=50, alpha_affine=50, p=0.5),
+                    A.GridDistortion(num_steps=5, distort_limit=0.3, p=0.5),
+                ], p=0.6),
+                A.CoarseDropout(max_holes=8, max_height=32, max_width=32, min_holes=1, p=0.3),
+            ], bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels']))
+            
+            # Prepare labels for augmentation
+            bboxes = []
+            class_labels = []
+            for label in labels:
+                bboxes.append(label[1:])  # x, y, w, h
+                class_labels.append(label[0])
+            
+            # Apply augmentation
+            if bboxes:
+                transformed = transform(image=image, bboxes=bboxes, class_labels=class_labels)
+                aug_image = transformed['image']
+                aug_bboxes = transformed['bboxes']
+                aug_class_labels = transformed['class_labels']
+                
+                # Convert back to YOLO format
+                aug_labels = []
+                for bbox, class_label in zip(aug_bboxes, aug_class_labels):
+                    aug_labels.append([class_label] + list(bbox))
+                
+                return aug_image, aug_labels
+            else:
+                # No bounding boxes, just augment image
+                transformed = transform(image=image)
+                return transformed['image'], labels
+        
+        except Exception as e:
+            print(f"Error in balancing augmentation: {e}")
+            return None
+    
+    def _create_balanced_dataset_yaml(self):
+        """Create YAML configuration for balanced dataset"""
+        yaml_config = {
+            'path': str(self.balanced_dataset_path.absolute()),
+            'train': 'images/train',
+            'val': 'images/val',
+            'test': 'images/test',
+            'nc': 11,
+            'names': self.class_names
+        }
+        
+        yaml_path = self.balanced_dataset_path / 'dataset.yaml'
+        with open(yaml_path, 'w') as f:
+            yaml.dump(yaml_config, f, default_flow_style=False)
+        
+        print(f"Balanced dataset YAML created: {yaml_path}")
+    
+    def _verify_balance(self):
+        """Verify that the balanced dataset is actually balanced"""
+        print("\n=== VERIFYING DATASET BALANCE ===")
+        
+        labels_dir = self.balanced_labels_path
+        class_counts = defaultdict(int)
+        
+        for label_file in labels_dir.glob('*.txt'):
+            with open(label_file, 'r') as f:
+                for line in f.readlines():
+                    if line.strip():
+                        parts = line.strip().split()
+                        if len(parts) == 5:
+                            class_id = int(parts[0])
+                            class_counts[class_id] += 1
+        
+        print("Balanced dataset class distribution:")
+        print("-" * 60)
+        print(f"{'Class ID':<8} {'Class Name':<20} {'Count':<8}")
+        print("-" * 60)
+        
+        for class_id in sorted(class_counts.keys()):
+            count = class_counts[class_id]
+            class_name = self.class_names.get(class_id, f'Unknown-{class_id}')
+            print(f"{class_id:<8} {class_name:<20} {count:<8}")
+        
+        if class_counts:
+            max_count = max(class_counts.values())
+            min_count = min(class_counts.values())
+            print(f"\nBalance ratio: {max_count / min_count:.2f}:1")
+            
+            if max_count / min_count <= 1.5:
+                print("✅ Dataset is well balanced!")
+            else:
+                print("⚠️  Dataset still has some imbalance")
+    
+    def plot_class_distribution(self, save_path=None):
+        """Plot class distribution before and after balancing"""
+        # Analyze original distribution
+        original_analysis = self.analyze_class_distribution('train')
+        
+        # Analyze balanced distribution
+        balanced_labels_dir = self.balanced_labels_path
+        balanced_class_counts = defaultdict(int)
+        
+        if balanced_labels_dir.exists():
+            for label_file in balanced_labels_dir.glob('*.txt'):
+                with open(label_file, 'r') as f:
+                    for line in f.readlines():
+                        if line.strip():
+                            parts = line.strip().split()
+                            if len(parts) == 5:
+                                class_id = int(parts[0])
+                                balanced_class_counts[class_id] += 1
+        
+        # Create comparison plot
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 8))
+        
+        # Original distribution
+        if original_analysis:
+            original_counts = original_analysis['class_counts']
+            class_names = [self.class_names.get(i, f'Class {i}') for i in range(11)]
+            original_values = [original_counts.get(i, 0) for i in range(11)]
+            
+            ax1.bar(range(11), original_values, color='skyblue', alpha=0.7)
+            ax1.set_title('Original Class Distribution', fontsize=14, fontweight='bold')
+            ax1.set_xlabel('Class ID')
+            ax1.set_ylabel('Number of Instances')
+            ax1.set_xticks(range(11))
+            ax1.set_xticklabels([f'{i}\n{name[:10]}' for i, name in enumerate(class_names)], rotation=45)
+        
+        # Balanced distribution
+        balanced_values = [balanced_class_counts.get(i, 0) for i in range(11)]
+        ax2.bar(range(11), balanced_values, color='lightgreen', alpha=0.7)
+        ax2.set_title('Balanced Class Distribution', fontsize=14, fontweight='bold')
+        ax2.set_xlabel('Class ID')
+        ax2.set_ylabel('Number of Instances')
+        ax2.set_xticks(range(11))
+        ax2.set_xticklabels([f'{i}\n{name[:10]}' for i, name in enumerate(class_names)], rotation=45)
+        
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"Distribution plot saved to: {save_path}")
+        
+        plt.show()
 
 class AdvancedFocalLoss(nn.Module):
     """Advanced Focal Loss with label smoothing and class balancing"""
@@ -276,15 +701,26 @@ class AdvancedAugmentation:
             return transformed['image']
 
 class AdvancedHMAYTSFTrainer:
-    """Advanced trainer for HMAY-TSF model with comprehensive optimization"""
+    """Advanced trainer for HMAY-TSF model with comprehensive optimization and dataset balancing"""
     
-    def __init__(self, model_size='s', device='auto', project_name='HMAY-TSF-Advanced'):
+    def __init__(self, model_size='s', device='auto', project_name='HMAY-TSF-Advanced', 
+                 enable_dataset_balancing=True, target_samples_per_class=None):
         self.device = device if device != 'auto' else ('cuda' if torch.cuda.is_available() else 'cpu')
         self.model_size = model_size
         self.project_name = project_name
+        self.enable_dataset_balancing = enable_dataset_balancing
+        self.target_samples_per_class = target_samples_per_class
         
         print(f"Using device: {self.device}")
         print(f"CUDA available: {torch.cuda.is_available()}")
+        print(f"Dataset balancing enabled: {enable_dataset_balancing}")
+        
+        # Initialize dataset balancer
+        if self.enable_dataset_balancing:
+            self.dataset_balancer = DatasetBalancer(
+                dataset_path='./dataset',
+                target_samples_per_class=self.target_samples_per_class
+            )
         
         # Initialize model
         self.model = None
@@ -446,7 +882,7 @@ class AdvancedHMAYTSFTrainer:
     
     def train_model(self, data_yaml, epochs=10, img_size=640, batch_size=8, 
                    save_dir='./runs/train', patience=100, resume=False):
-        """Advanced training with comprehensive optimization"""
+        """Advanced training with comprehensive optimization and dataset balancing"""
         
         print(f"Starting advanced training with:")
         print(f"  Data: {data_yaml}")
@@ -454,9 +890,39 @@ class AdvancedHMAYTSFTrainer:
         print(f"  Image size: {img_size}")
         print(f"  Batch size: {batch_size}")
         print(f"  Device: {self.device}")
+        print(f"  Dataset balancing: {self.enable_dataset_balancing}")
+        
+        # Dataset balancing step
+        if self.enable_dataset_balancing:
+            print("\n" + "="*80)
+            print("STEP 1: DATASET BALANCING")
+            print("="*80)
+            
+            # Analyze original dataset
+            print("\nAnalyzing original dataset distribution...")
+            original_analysis = self.dataset_balancer.analyze_class_distribution('train')
+            
+            # Create balanced dataset
+            print("\nCreating balanced dataset...")
+            balanced_data_yaml = self.dataset_balancer.create_balanced_dataset(
+                target_samples_per_class=self.target_samples_per_class
+            )
+            
+            if balanced_data_yaml:
+                print(f"✅ Balanced dataset created successfully!")
+                print(f"   Using balanced dataset: {balanced_data_yaml}")
+                data_yaml = balanced_data_yaml
+                
+                # Plot distribution comparison
+                plot_path = Path(save_dir) / 'class_distribution_comparison.png'
+                self.dataset_balancer.plot_class_distribution(save_path=str(plot_path))
+            else:
+                print("⚠️  Failed to create balanced dataset, using original dataset")
+        else:
+            print("Dataset balancing disabled, using original dataset")
         
         # Create save directory and setup CSV logging
-        run_name = f'advanced_hmay_tsf_{self.model_size}_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
+        run_name = f'advanced_hmay_tsf_{self.model_size}_{"balanced" if self.enable_dataset_balancing else "original"}_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
         full_save_dir = Path(save_dir) / run_name
         full_save_dir.mkdir(parents=True, exist_ok=True)
         
@@ -543,6 +1009,10 @@ class AdvancedHMAYTSFTrainer:
             
             # Save advanced training summary
             self.save_advanced_training_summary(full_save_dir, results)
+            
+            # Analyze balanced dataset performance
+            if self.enable_dataset_balancing:
+                self.analyze_balanced_performance(full_save_dir)
             
             return results
             
@@ -703,12 +1173,16 @@ class AdvancedHMAYTSFTrainer:
             print(f"Error in train epoch callback: {e}")
     
     def save_advanced_training_summary(self, save_dir, results):
-        """Save advanced training summary with comprehensive analysis"""
+        """Save advanced training summary with comprehensive analysis and dataset balancing info"""
         summary_path = Path(save_dir) / 'advanced_training_summary.json'
         
         summary = {
             'model_size': self.model_size,
             'device': self.device,
+            'dataset_balancing': {
+                'enabled': self.enable_dataset_balancing,
+                'target_samples_per_class': self.target_samples_per_class
+            },
             'best_metrics': self.best_metrics,
             'training_metrics': self.training_metrics[-10:],  # Last 10 epochs
             'total_epochs': len(self.training_metrics),
@@ -724,10 +1198,80 @@ class AdvancedHMAYTSFTrainer:
             }
         }
         
+        # Add dataset balancing analysis if enabled
+        if self.enable_dataset_balancing and hasattr(self, 'dataset_balancer'):
+            try:
+                # Analyze balanced dataset performance
+                balanced_analysis = self.dataset_balancer.analyze_class_distribution('train')
+                if balanced_analysis:
+                    summary['dataset_balancing']['balanced_distribution'] = balanced_analysis['class_counts']
+                    summary['dataset_balancing']['total_balanced_images'] = balanced_analysis['total_images']
+                    summary['dataset_balancing']['total_balanced_annotations'] = balanced_analysis['total_annotations']
+            except Exception as e:
+                print(f"Warning: Could not analyze balanced dataset: {e}")
+        
         with open(summary_path, 'w') as f:
             json.dump(summary, f, indent=2)
         
         print(f"Advanced training summary saved to: {summary_path}")
+    
+    def analyze_balanced_performance(self, save_dir):
+        """Analyze and report on balanced dataset performance"""
+        if not self.enable_dataset_balancing:
+            print("Dataset balancing not enabled, skipping performance analysis")
+            return
+        
+        print("\n" + "="*80)
+        print("BALANCED DATASET PERFORMANCE ANALYSIS")
+        print("="*80)
+        
+        try:
+            # Analyze balanced dataset
+            balanced_analysis = self.dataset_balancer.analyze_class_distribution('train')
+            
+            if balanced_analysis:
+                # Calculate balance metrics
+                class_counts = list(balanced_analysis['class_counts'].values())
+                if class_counts:
+                    max_count = max(class_counts)
+                    min_count = min(class_counts)
+                    balance_ratio = max_count / min_count if min_count > 0 else float('inf')
+                    
+                    print(f"\nBalance Analysis:")
+                    print(f"  Total images: {balanced_analysis['total_images']}")
+                    print(f"  Total annotations: {balanced_analysis['total_annotations']}")
+                    print(f"  Most common class: {max_count} instances")
+                    print(f"  Least common class: {min_count} instances")
+                    print(f"  Balance ratio: {balance_ratio:.2f}:1")
+                    
+                    if balance_ratio <= 1.5:
+                        print("  ✅ Excellent balance achieved!")
+                    elif balance_ratio <= 2.0:
+                        print("  ✅ Good balance achieved!")
+                    elif balance_ratio <= 3.0:
+                        print("  ⚠️  Moderate balance - consider adjusting target samples")
+                    else:
+                        print("  ❌ Poor balance - dataset needs further balancing")
+                    
+                    # Save balance report
+                    balance_report_path = Path(save_dir) / 'balance_report.json'
+                    balance_report = {
+                        'balance_ratio': balance_ratio,
+                        'class_distribution': balanced_analysis['class_counts'],
+                        'total_images': balanced_analysis['total_images'],
+                        'total_annotations': balanced_analysis['total_annotations'],
+                        'balance_quality': 'excellent' if balance_ratio <= 1.5 else 'good' if balance_ratio <= 2.0 else 'moderate' if balance_ratio <= 3.0 else 'poor'
+                    }
+                    
+                    with open(balance_report_path, 'w') as f:
+                        json.dump(balance_report, f, indent=2)
+                    
+                    print(f"  Balance report saved to: {balance_report_path}")
+        
+        except Exception as e:
+            print(f"Error in balanced performance analysis: {e}")
+            import traceback
+            traceback.print_exc()
     
     def evaluate_model(self, data_yaml, weights_path=None):
         """Advanced model evaluation"""
@@ -769,8 +1313,8 @@ class AdvancedHMAYTSFTrainer:
         return results
 
 def main():
-    """Main function for advanced training"""
-    parser = argparse.ArgumentParser(description='Advanced HMAY-TSF Training')
+    """Main function for advanced training with dataset balancing"""
+    parser = argparse.ArgumentParser(description='Advanced HMAY-TSF Training with Dataset Balancing')
     parser.add_argument('--data', type=str, default='./dataset/dataset.yaml', help='Dataset YAML file')
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs')
     parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
@@ -779,14 +1323,22 @@ def main():
     parser.add_argument('--device', type=str, default='auto', help='Device to use')
     parser.add_argument('--save-dir', type=str, default='./runs/train', help='Save directory')
     parser.add_argument('--patience', type=int, default=100, help='Early stopping patience')
+    parser.add_argument('--enable-balancing', action='store_true', default=True, help='Enable dataset balancing')
+    parser.add_argument('--disable-balancing', action='store_true', help='Disable dataset balancing')
+    parser.add_argument('--target-samples', type=int, default=None, help='Target samples per class for balancing')
     
     args = parser.parse_args()
+    
+    # Determine if balancing should be enabled
+    enable_balancing = args.enable_balancing and not args.disable_balancing
     
     # Initialize advanced trainer
     trainer = AdvancedHMAYTSFTrainer(
         model_size=args.model_size,
         device=args.device,
-        project_name='HMAY-TSF-Advanced-99.2-Percent'
+        project_name='HMAY-TSF-Advanced-99.2-Percent-Balanced',
+        enable_dataset_balancing=enable_balancing,
+        target_samples_per_class=args.target_samples
     )
     
     # Setup advanced model
@@ -808,5 +1360,63 @@ def main():
     else:
         print("Advanced training failed!")
 
+def run_dataset_balancing_only(dataset_path='./dataset', target_samples_per_class=None, save_plots=True):
+    """Standalone function to run dataset balancing without training"""
+    print("="*80)
+    print("STANDALONE DATASET BALANCING")
+    print("="*80)
+    
+    # Initialize dataset balancer
+    balancer = DatasetBalancer(dataset_path=dataset_path, target_samples_per_class=target_samples_per_class)
+    
+    # Analyze original distribution
+    print("\n1. Analyzing original dataset...")
+    original_analysis = balancer.analyze_class_distribution('train')
+    
+    if not original_analysis:
+        print("❌ Failed to analyze original dataset!")
+        return None
+    
+    # Create balanced dataset
+    print("\n2. Creating balanced dataset...")
+    balanced_yaml = balancer.create_balanced_dataset(target_samples_per_class=target_samples_per_class)
+    
+    if not balanced_yaml:
+        print("❌ Failed to create balanced dataset!")
+        return None
+    
+    # Plot distribution comparison
+    if save_plots:
+        print("\n3. Creating distribution plots...")
+        plot_path = Path(dataset_path) / 'balanced_dataset' / 'class_distribution_comparison.png'
+        balancer.plot_class_distribution(save_path=str(plot_path))
+    
+    print(f"\n✅ Dataset balancing completed successfully!")
+    print(f"   Balanced dataset: {balanced_yaml}")
+    print(f"   Original dataset: {dataset_path}")
+    
+    return balanced_yaml
+
 if __name__ == "__main__":
-    main() 
+    import sys
+    
+    # Check if running dataset balancing only
+    if len(sys.argv) > 1 and sys.argv[1] == '--balance-only':
+        # Extract balance-specific arguments
+        balance_args = sys.argv[2:]
+        
+        # Parse balance arguments
+        dataset_path = './dataset'
+        target_samples = None
+        
+        for i, arg in enumerate(balance_args):
+            if arg == '--dataset-path' and i + 1 < len(balance_args):
+                dataset_path = balance_args[i + 1]
+            elif arg == '--target-samples' and i + 1 < len(balance_args):
+                target_samples = int(balance_args[i + 1])
+        
+        # Run balancing only
+        run_dataset_balancing_only(dataset_path, target_samples)
+    else:
+        # Run full training with balancing
+        main() 
