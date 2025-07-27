@@ -173,6 +173,7 @@ methodology:
   use_enhanced_augmentation: true
   use_curriculum_learning: true
   use_mixed_precision: true
+  use_class_balancing: true  # Enable class balancing for severe imbalance
 
 # Advanced Training Features
 advanced:
@@ -181,6 +182,8 @@ advanced:
     alpha: 1.0
     gamma: 2.0
     label_smoothing: 0.1
+    use_balanced_focal: true
+    class_weights: true
   
   iou_loss:
     reduction: 'mean'

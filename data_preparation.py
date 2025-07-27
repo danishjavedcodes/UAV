@@ -17,6 +17,9 @@ from sklearn.model_selection import train_test_split
 import random
 from PIL import Image
 import json
+from collections import Counter, defaultdict
+import glob
+import math
 
 class VisDroneDataset(Dataset):
     """Custom dataset for VisDrone with augmentations"""
@@ -261,6 +264,248 @@ class ActiveLearningSelector:
         
         return [sample[0] for sample in selected]
 
+class ClassBalancedAugmentation:
+    """Advanced class balancing augmentation for severe class imbalance"""
+    
+    def __init__(self, dataset_path='./dataset', target_samples_per_class=5000):
+        self.dataset_path = dataset_path
+        self.target_samples_per_class = target_samples_per_class
+        self.class_counts = None
+        self.class_distribution = None
+        self.analyze_class_distribution()
+    
+    def analyze_class_distribution(self):
+        """Analyze current class distribution in the dataset"""
+        print("Analyzing class distribution for balancing...")
+        
+        train_labels_path = os.path.join(self.dataset_path, 'labels', 'train')
+        class_counts = Counter()
+        class_to_files = defaultdict(list)
+        
+        for label_file in glob.glob(os.path.join(train_labels_path, '*.txt')):
+            with open(label_file, 'r') as f:
+                for line in f.readlines():
+                    if line.strip():
+                        class_id = int(line.split()[0])
+                        class_counts[class_id] += 1
+                        class_to_files[class_id].append(label_file)
+        
+        self.class_counts = class_counts
+        self.class_to_files = class_to_files
+        
+        print("Current Class Distribution:")
+        for class_id in sorted(class_counts.keys()):
+            count = class_counts[class_id]
+            percentage = (count / sum(class_counts.values())) * 100
+            print(f"  Class {class_id}: {count:,} ({percentage:.2f}%)")
+        
+        # Calculate class weights
+        self.calculate_class_weights()
+        
+        return class_counts
+    
+    def calculate_class_weights(self):
+        """Calculate balanced class weights using inverse frequency"""
+        if self.class_counts is None:
+            self.analyze_class_distribution()
+        
+        # Calculate inverse frequency weights
+        max_count = max(self.class_counts.values())
+        self.class_weights = {}
+        
+        for class_id, count in self.class_counts.items():
+            if count > 0:
+                # Inverse frequency weighting with smoothing
+                weight = max_count / count
+                # Apply square root to reduce extreme weights
+                weight = math.sqrt(weight)
+                # Cap maximum weight to prevent over-emphasis
+                weight = min(weight, 10.0)
+                self.class_weights[class_id] = weight
+        
+        print("Class Weights:")
+        for class_id in sorted(self.class_weights.keys()):
+            weight = self.class_weights[class_id]
+            print(f"  Class {class_id}: {weight:.3f}")
+        
+        return self.class_weights
+    
+    def create_balanced_dataset(self, output_path='./dataset_balanced'):
+        """Create a balanced dataset with equal representation of all classes"""
+        print(f"Creating balanced dataset at {output_path}")
+        
+        # Create output directories
+        os.makedirs(output_path, exist_ok=True)
+        os.makedirs(os.path.join(output_path, 'images', 'train'), exist_ok=True)
+        os.makedirs(os.path.join(output_path, 'images', 'val'), exist_ok=True)
+        os.makedirs(os.path.join(output_path, 'labels', 'train'), exist_ok=True)
+        os.makedirs(os.path.join(output_path, 'labels', 'val'), exist_ok=True)
+        
+        # Determine target samples per class
+        max_class_count = max(self.class_counts.values())
+        target_samples = min(self.target_samples_per_class, max_class_count)
+        
+        print(f"Target samples per class: {target_samples}")
+        
+        # Process each class
+        for class_id in sorted(self.class_counts.keys()):
+            current_count = self.class_counts[class_id]
+            files_for_class = self.class_to_files[class_id]
+            
+            print(f"Processing class {class_id}: {current_count} -> {target_samples}")
+            
+            if current_count < target_samples:
+                # Need to augment this class
+                self.augment_rare_class(class_id, files_for_class, target_samples, output_path)
+            else:
+                # Need to undersample this class
+                self.undersample_common_class(class_id, files_for_class, target_samples, output_path)
+    
+    def augment_rare_class(self, class_id, files, target_count, output_path):
+        """Augment rare classes using various techniques"""
+        print(f"Augmenting class {class_id} from {len(files)} to {target_count} samples")
+        
+        # Get unique files (remove duplicates)
+        unique_files = list(set(files))
+        random.shuffle(unique_files)
+        
+        # Calculate how many augmentations needed per file
+        augmentations_per_file = max(1, target_count // len(unique_files))
+        
+        augmented_count = 0
+        for file_path in unique_files:
+            if augmented_count >= target_count:
+                break
+            
+            # Load image and labels
+            img_path = file_path.replace('labels', 'images').replace('.txt', '.jpg')
+            if not os.path.exists(img_path):
+                continue
+            
+            # Load original data
+            image = cv2.imread(img_path)
+            labels = self.load_labels(file_path)
+            
+            # Filter labels for this class
+            class_labels = [label for label in labels if int(label[0]) == class_id]
+            
+            if len(class_labels) == 0:
+                continue
+            
+            # Create multiple augmented versions
+            for i in range(augmentations_per_file):
+                if augmented_count >= target_count:
+                    break
+                
+                # Apply different augmentation strategies
+                if i == 0:
+                    # Original image
+                    aug_image, aug_labels = image.copy(), class_labels.copy()
+                else:
+                    # Augmented versions
+                    aug_image, aug_labels = self.apply_class_specific_augmentation(
+                        image, class_labels, class_id, i
+                    )
+                
+                # Save augmented sample
+                sample_id = f"class_{class_id}_aug_{augmented_count:06d}"
+                self.save_augmented_sample(
+                    aug_image, aug_labels, sample_id, output_path
+                )
+                
+                augmented_count += 1
+        
+        print(f"Created {augmented_count} augmented samples for class {class_id}")
+    
+    def apply_class_specific_augmentation(self, image, labels, class_id, augmentation_id):
+        """Apply class-specific augmentation strategies"""
+        # Different augmentation strategies based on class type
+        if class_id in [4, 5, 6, 9]:  # Vehicles (car, van, truck, bus)
+            # Vehicle-specific augmentations
+            transform = A.Compose([
+                A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, p=0.8),
+                A.HueSaturationValue(hue_shift_limit=20, sat_shift_limit=30, val_shift_limit=20, p=0.7),
+                A.OneOf([
+                    A.GaussNoise(var_limit=(10.0, 50.0), p=0.5),
+                    A.GaussianBlur(blur_limit=(3, 7), p=0.5),
+                ], p=0.6),
+                A.OneOf([
+                    A.RandomRotate90(p=0.3),
+                    A.HorizontalFlip(p=0.5),
+                ], p=0.7),
+            ], bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels']))
+        else:
+            # General augmentations for other classes
+            transform = A.Compose([
+                A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.8),
+                A.HueSaturationValue(hue_shift_limit=15, sat_shift_limit=25, val_shift_limit=15, p=0.7),
+                A.OneOf([
+                    A.GaussNoise(var_limit=(5.0, 25.0), p=0.4),
+                    A.GaussianBlur(blur_limit=(3, 5), p=0.4),
+                ], p=0.5),
+                A.HorizontalFlip(p=0.5),
+            ], bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels']))
+        
+        # Apply transformation
+        transformed = transform(image=image, bboxes=labels, class_labels=[label[0] for label in labels])
+        
+        return transformed['image'], transformed['bboxes']
+    
+    def undersample_common_class(self, class_id, files, target_count, output_path):
+        """Undersample common classes to balance the dataset"""
+        print(f"Undersampling class {class_id} from {len(files)} to {target_count} samples")
+        
+        # Randomly select target number of files
+        selected_files = random.sample(files, min(target_count, len(files)))
+        
+        for file_path in selected_files:
+            # Copy original file
+            img_path = file_path.replace('labels', 'images').replace('.txt', '.jpg')
+            if not os.path.exists(img_path):
+                continue
+            
+            # Load and filter labels for this class
+            labels = self.load_labels(file_path)
+            class_labels = [label for label in labels if int(label[0]) == class_id]
+            
+            if len(class_labels) == 0:
+                continue
+            
+            # Save sample
+            sample_id = f"class_{class_id}_orig_{len(selected_files):06d}"
+            self.save_augmented_sample(
+                cv2.imread(img_path), class_labels, sample_id, output_path
+            )
+    
+    def save_augmented_sample(self, image, labels, sample_id, output_path):
+        """Save augmented image and labels"""
+        # Save image
+        img_path = os.path.join(output_path, 'images', 'train', f"{sample_id}.jpg")
+        cv2.imwrite(img_path, image)
+        
+        # Save labels
+        label_path = os.path.join(output_path, 'labels', 'train', f"{sample_id}.txt")
+        with open(label_path, 'w') as f:
+            for label in labels:
+                if isinstance(label, (list, tuple)):
+                    f.write(f"{int(label[0])} {label[1]:.6f} {label[2]:.6f} {label[3]:.6f} {label[4]:.6f}\n")
+                else:
+                    f.write(f"{label}\n")
+    
+    def load_labels(self, label_file):
+        """Load YOLO format labels"""
+        labels = []
+        if os.path.exists(label_file):
+            with open(label_file, 'r') as f:
+                for line in f.readlines():
+                    if line.strip():
+                        parts = line.strip().split()
+                        if len(parts) == 5:
+                            class_id = int(parts[0])
+                            bbox = [float(x) for x in parts[1:]]
+                            labels.append([class_id] + bbox)
+        return labels
+
 def create_dataset_yaml(dataset_path):
     """Create dataset YAML configuration for YOLOv8"""
     dataset_config = {
@@ -289,6 +534,38 @@ def create_dataset_yaml(dataset_path):
         yaml.dump(dataset_config, f, default_flow_style=False)
     
     print(f"Dataset YAML created at {yaml_path}")
+    return str(yaml_path)
+
+def create_balanced_dataset_yaml(dataset_path):
+    """Create balanced dataset YAML configuration"""
+    dataset_config = {
+        'path': str(Path(dataset_path).absolute()),
+        'train': 'images/train',
+        'val': 'images/val',
+        'test': 'images/test',
+        'nc': 11,  # Number of classes
+        'names': {
+            0: 'ignored regions',
+            1: 'pedestrian', 
+            2: 'people',
+            3: 'bicycle',
+            4: 'car',
+            5: 'van',
+            6: 'truck',
+            7: 'tricycle',
+            8: 'awning-tricycle',
+            9: 'bus',
+            10: 'motor'
+        },
+        'balanced': True,
+        'target_samples_per_class': 5000
+    }
+    
+    yaml_path = Path(dataset_path) / 'dataset_balanced.yaml'
+    with open(yaml_path, 'w') as f:
+        yaml.dump(dataset_config, f, default_flow_style=False)
+    
+    print(f"Balanced dataset YAML created at {yaml_path}")
     return str(yaml_path)
 
 def prepare_visdrone_dataset(dataset_path='./dataset'):
