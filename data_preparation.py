@@ -323,16 +323,50 @@ class ClassBalancedAugmentation:
         print("Analyzing class distribution for balancing...")
         
         train_labels_path = os.path.join(self.dataset_path, 'labels', 'train')
+        print(f"Looking for train labels in: {train_labels_path}")
+        
+        if not os.path.exists(train_labels_path):
+            print(f"Warning: Train label directory not found: {train_labels_path}")
+            # Try alternative paths
+            alt_paths = [
+                os.path.join(self.dataset_path, 'train/labels'),
+                os.path.join(self.dataset_path, 'labels'),
+                os.path.join(self.dataset_path, 'train'),
+            ]
+            
+            for alt_path in alt_paths:
+                if os.path.exists(alt_path):
+                    print(f"Found alternative path: {alt_path}")
+                    train_labels_path = alt_path
+                    break
+            else:
+                raise FileNotFoundError(f"No valid label directory found. Checked: {train_labels_path}, {alt_paths}")
+        
         class_counts = Counter()
         class_to_files = defaultdict(list)
         
-        for label_file in glob.glob(os.path.join(train_labels_path, '*.txt')):
-            with open(label_file, 'r') as f:
-                for line in f.readlines():
-                    if line.strip():
-                        class_id = int(line.split()[0])
-                        class_counts[class_id] += 1
-                        class_to_files[class_id].append(label_file)
+        label_files = glob.glob(os.path.join(train_labels_path, '*.txt'))
+        print(f"Found {len(label_files)} training label files")
+        
+        if len(label_files) == 0:
+            print(f"No .txt files found in {train_labels_path}")
+            print(f"Directory contents: {os.listdir(train_labels_path) if os.path.exists(train_labels_path) else 'Directory does not exist'}")
+            raise ValueError("No label files found")
+        
+        for label_file in label_files:
+            try:
+                with open(label_file, 'r') as f:
+                    for line in f.readlines():
+                        if line.strip():
+                            class_id = int(line.split()[0])
+                            class_counts[class_id] += 1
+                            class_to_files[class_id].append(label_file)
+            except Exception as e:
+                print(f"Error processing {label_file}: {e}")
+                continue
+        
+        if not class_counts:
+            raise ValueError("No classes found in the dataset. Check if label files contain valid annotations.")
         
         self.class_counts = class_counts
         self.class_to_files = class_to_files
@@ -352,6 +386,9 @@ class ClassBalancedAugmentation:
         """Calculate balanced class weights using inverse frequency"""
         if self.class_counts is None:
             self.analyze_class_distribution()
+        
+        if not self.class_counts:
+            raise ValueError("No class counts available. Cannot calculate weights.")
         
         # Calculate inverse frequency weights
         max_count = max(self.class_counts.values())

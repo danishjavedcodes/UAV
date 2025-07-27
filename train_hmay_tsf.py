@@ -261,9 +261,29 @@ class HMAYTSFTrainer:
         with open(self.config['data_yaml'], 'r') as f:
             data_config = yaml.safe_load(f)
         
+        # Handle different environment paths
+        dataset_path = data_config['path']
+        if not os.path.exists(dataset_path):
+            # Try alternative paths for different environments
+            alt_paths = [
+                './dataset',
+                '../dataset',
+                'dataset',
+                '/kaggle/working/UAV/dataset',
+                '/kaggle/working/dataset'
+            ]
+            
+            for alt_path in alt_paths:
+                if os.path.exists(alt_path):
+                    print(f"Using alternative dataset path: {alt_path}")
+                    dataset_path = alt_path
+                    break
+            else:
+                raise FileNotFoundError(f"Dataset not found. Checked: {dataset_path}, {alt_paths}")
+        
         # Analyze class distribution
         self.class_analyzer = ClassBalancedAugmentation(
-            dataset_path=data_config['path'],
+            dataset_path=dataset_path,
             target_samples_per_class=self.config.get('target_samples_per_class', 5000)
         )
         
@@ -278,16 +298,16 @@ class HMAYTSFTrainer:
         
         # Create datasets
         train_dataset = VisDroneDataset(
-            img_dir=os.path.join(data_config['path'], data_config['train']),
-            label_dir=os.path.join(data_config['path'], 'labels/train'),
+            img_dir=os.path.join(dataset_path, data_config['train']),
+            label_dir=os.path.join(dataset_path, 'labels/train'),
             img_size=self.config['img_size'],
             augment=True,
             super_res=self.config.get('use_super_resolution', False)
         )
         
         val_dataset = VisDroneDataset(
-            img_dir=os.path.join(data_config['path'], data_config['val']),
-            label_dir=os.path.join(data_config['path'], 'labels/val'),
+            img_dir=os.path.join(dataset_path, data_config['val']),
+            label_dir=os.path.join(dataset_path, 'labels/val'),
             img_size=self.config['img_size'],
             augment=False,
             super_res=False
