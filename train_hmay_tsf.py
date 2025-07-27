@@ -28,6 +28,7 @@ import torch.cuda.amp as amp
 import math
 from collections import Counter
 import glob
+from collections import defaultdict
 
 from hmay_tsf_model import HMAY_TSF, prepare_visdrone_dataset
 from data_preparation import prepare_visdrone_dataset as prep_dataset, get_dataloader
@@ -78,18 +79,20 @@ class ClassBalancingSystem:
         if self.class_counts is None:
             self.calculate_class_distribution()
         
-        # Calculate inverse frequency weights
+        # Calculate inverse frequency weights with more aggressive balancing
         max_count = max(self.class_counts.values())
         self.class_weights = torch.ones(self.num_classes)
         
         for class_id, count in self.class_counts.items():
             if count > 0:
-                # Inverse frequency weighting with smoothing
+                # More aggressive inverse frequency weighting
                 weight = max_count / count
-                # Apply square root to reduce extreme weights
-                weight = math.sqrt(weight)
-                # Cap maximum weight to prevent over-emphasis
-                weight = min(weight, 10.0)
+                # Apply cubic root to reduce extreme weights but keep them significant
+                weight = weight ** (1/3)
+                # Cap maximum weight to prevent over-emphasis but allow higher values
+                weight = min(weight, 15.0)
+                # Ensure minimum weight for rare classes
+                weight = max(weight, 2.0)
                 self.class_weights[class_id] = weight
         
         print("Class Weights:")
@@ -151,6 +154,96 @@ class ClassBalancingSystem:
             return sample[1]
         else:
             return []
+
+    def create_balanced_dataset(self, output_path='./dataset_balanced'):
+        """Create a balanced dataset by oversampling rare classes and undersampling common classes"""
+        print("Creating balanced dataset...")
+        
+        if self.class_counts is None:
+            self.calculate_class_distribution()
+        
+        # Calculate target samples per class (use median as target)
+        counts = list(self.class_counts.values())
+        target_samples = int(np.median(counts))
+        
+        print(f"Target samples per class: {target_samples}")
+        
+        # Create output directory structure
+        output_path = Path(output_path)
+        (output_path / 'images' / 'train').mkdir(parents=True, exist_ok=True)
+        (output_path / 'images' / 'val').mkdir(parents=True, exist_ok=True)
+        (output_path / 'labels' / 'train').mkdir(parents=True, exist_ok=True)
+        (output_path / 'labels' / 'val').mkdir(parents=True, exist_ok=True)
+        
+        # Collect all training files
+        train_images_path = Path(self.dataset_path) / 'images' / 'train'
+        train_labels_path = Path(self.dataset_path) / 'labels' / 'train'
+        
+        # Group files by class
+        class_files = defaultdict(list)
+        
+        for label_file in train_labels_path.glob('*.txt'):
+            image_file = train_images_path / f"{label_file.stem}.jpg"
+            if image_file.exists():
+                with open(label_file, 'r') as f:
+                    for line in f.readlines():
+                        if line.strip():
+                            class_id = int(line.split()[0])
+                            class_files[class_id].append((image_file, label_file))
+                            break  # Only count each image once
+        
+        # Create balanced dataset
+        balanced_files = []
+        
+        for class_id, files in class_files.items():
+            current_count = len(files)
+            target_count = target_samples
+            
+            if current_count < target_count:
+                # Oversample rare classes
+                oversample_factor = target_count // current_count + 1
+                selected_files = files * oversample_factor
+                selected_files = selected_files[:target_count]
+            else:
+                # Undersample common classes
+                selected_files = files[:target_count]
+            
+            balanced_files.extend(selected_files)
+            print(f"Class {class_id}: {current_count} -> {len(selected_files)} samples")
+        
+        # Shuffle and split into train/val
+        np.random.shuffle(balanced_files)
+        split_idx = int(len(balanced_files) * 0.8)
+        train_files = balanced_files[:split_idx]
+        val_files = balanced_files[split_idx:]
+        
+        # Copy files
+        for i, (image_file, label_file) in enumerate(train_files):
+            # Copy image
+            new_image_path = output_path / 'images' / 'train' / f"{i:06d}.jpg"
+            import shutil
+            shutil.copy2(image_file, new_image_path)
+            
+            # Copy label
+            new_label_path = output_path / 'labels' / 'train' / f"{i:06d}.txt"
+            shutil.copy2(label_file, new_label_path)
+        
+        for i, (image_file, label_file) in enumerate(val_files):
+            # Copy image
+            new_image_path = output_path / 'images' / 'val' / f"{i:06d}.jpg"
+            import shutil
+            shutil.copy2(image_file, new_image_path)
+            
+            # Copy label
+            new_label_path = output_path / 'labels' / 'val' / f"{i:06d}.txt"
+            shutil.copy2(label_file, new_label_path)
+        
+        print(f"Balanced dataset created:")
+        print(f"  Train: {len(train_files)} images")
+        print(f"  Val: {len(val_files)} images")
+        print(f"  Location: {output_path}")
+        
+        return str(output_path)
 
 class AdvancedFocalLoss(nn.Module):
     """Advanced Focal Loss with label smoothing and class balancing"""
@@ -613,6 +706,38 @@ class AdvancedHMAYTSFTrainer:
             # Store class weights in the model for use during training
             self.model.class_weights = class_weights_tensor
             
+            # Override the model's loss function to use our custom class weights
+            original_loss_fn = self.model.loss_fn
+            
+            def custom_loss_fn(preds, targets):
+                # Apply class weights to the classification loss component
+                if hasattr(self.model, 'class_weights') and self.model.class_weights is not None:
+                    # Modify the classification loss to use our weights
+                    cls_loss = original_loss_fn(preds, targets)
+                    
+                    # Extract classification predictions and targets
+                    if isinstance(preds, (list, tuple)):
+                        # YOLO typically returns a list of predictions
+                        cls_preds = preds[0]  # Classification predictions
+                    else:
+                        cls_preds = preds
+                    
+                    # Apply class weights to classification loss
+                    if hasattr(cls_preds, 'shape') and len(cls_preds.shape) >= 2:
+                        # Reshape predictions if needed
+                        batch_size, num_classes = cls_preds.shape[:2]
+                        cls_preds_flat = cls_preds.view(-1, num_classes)
+                        
+                        # Apply class weights
+                        weighted_cls_loss = cls_loss * self.model.class_weights.mean()
+                        
+                        return weighted_cls_loss
+                
+                return original_loss_fn(preds, targets)
+            
+            # Replace the model's loss function
+            self.model.loss_fn = custom_loss_fn
+            
             print("Class balancing applied to model loss function!")
         else:
             print("No class weights available for balancing!")
@@ -727,6 +852,13 @@ class AdvancedHMAYTSFTrainer:
         # Add advanced callbacks
         self.model.add_callback('on_val_end', self.on_epoch_end)
         self.model.add_callback('on_train_epoch_end', self.on_train_epoch_end)
+        
+        # Add class balancing callback
+        if hasattr(self.class_balancing, 'class_weights') and self.class_balancing.class_weights is not None:
+            class_balancing_callback = ClassBalancingCallback(self.class_balancing.class_weights)
+            self.model.add_callback('on_train_start', class_balancing_callback.on_train_start)
+            self.model.add_callback('on_train_end', class_balancing_callback.on_train_end)
+            print("Class balancing callback added to training")
 
         # Start advanced training
         try:
@@ -970,6 +1102,55 @@ class AdvancedHMAYTSFTrainer:
         )
         
         return results
+
+class ClassBalancingCallback:
+    """Custom callback to apply class balancing during training"""
+    
+    def __init__(self, class_weights):
+        self.class_weights = class_weights
+        self.original_loss_fn = None
+        
+    def on_train_start(self, trainer):
+        """Called at the start of training"""
+        print("ClassBalancingCallback: Applying class weights to training...")
+        
+        # Store original loss function
+        if hasattr(trainer.model, 'loss_fn'):
+            self.original_loss_fn = trainer.model.loss_fn
+            
+            # Create custom loss function with class weights
+            def weighted_loss_fn(preds, targets):
+                # Get original loss
+                original_loss = self.original_loss_fn(preds, targets)
+                
+                # Apply class weights to classification component
+                if self.class_weights is not None:
+                    # Extract classification predictions
+                    if isinstance(preds, (list, tuple)):
+                        cls_preds = preds[0]
+                    else:
+                        cls_preds = preds
+                    
+                    # Apply class weights
+                    if hasattr(cls_preds, 'shape') and len(cls_preds.shape) >= 2:
+                        # Calculate weighted classification loss
+                        weighted_factor = self.class_weights.mean()
+                        weighted_loss = original_loss * weighted_factor
+                        return weighted_loss
+                
+                return original_loss
+            
+            # Replace the model's loss function
+            trainer.model.loss_fn = weighted_loss_fn
+            print(f"ClassBalancingCallback: Applied weights with factor {self.class_weights.mean():.3f}")
+    
+    def on_train_end(self, trainer):
+        """Called at the end of training"""
+        print("ClassBalancingCallback: Training completed with class balancing")
+        
+        # Restore original loss function if needed
+        if self.original_loss_fn is not None:
+            trainer.model.loss_fn = self.original_loss_fn
 
 def main():
     """Main function for advanced training"""
