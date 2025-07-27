@@ -214,40 +214,89 @@ class DatasetBalancer:
         """Select balanced samples from each class"""
         print("\n🎯 Selecting balanced samples...")
         
-        selected_files = defaultdict(list)
+        # First, analyze how many instances of each class we have per file
+        class_instances_per_file = defaultdict(lambda: defaultdict(int))
+        file_to_classes = defaultdict(set)
         
         for split, stats in self.original_stats.items():
-            print(f"\n📁 Processing {split} split...")
+            print(f"\n📁 Analyzing {split} split for class instances per file...")
             
-            file_class_mapping = stats['file_class_mapping']
+            labels_dir = self.dataset_path / 'labels' / split
             
-            for class_id, target_count in balanced_distribution.items():
-                if class_id not in file_class_mapping:
+            for label_file in tqdm(list(labels_dir.glob('*.txt')), desc=f"Analyzing {split} files"):
+                try:
+                    with open(label_file, 'r') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line:
+                                parts = line.split()
+                                if len(parts) >= 5:
+                                    class_id = int(parts[0])
+                                    class_instances_per_file[class_id][str(label_file)] += 1
+                                    file_to_classes[str(label_file)].add(class_id)
+                except Exception as e:
+                    print(f"⚠️  Error reading {label_file}: {e}")
                     continue
-                
-                available_files = file_class_mapping[class_id]
-                print(f"   Class {class_id} ({self.class_names.get(class_id, f'class_{class_id}')}): "
-                      f"{len(available_files)} files available, need {target_count} samples")
-                
-                # Calculate how many files we need to select
-                # We'll select files that contain this class
-                files_with_class = [f for f in available_files if f.endswith('.txt')]
-                
-                if len(files_with_class) >= target_count:
-                    # Randomly select files
-                    selected = random.sample(files_with_class, target_count)
-                else:
-                    # Use all available files
-                    selected = files_with_class
-                    print(f"     ⚠️  Only {len(files_with_class)} files available, using all")
-                
-                selected_files[class_id].extend(selected)
         
-        return selected_files
+        # Now select files to achieve balanced distribution
+        selected_files = defaultdict(list)
+        files_needed_per_class = {}
+        
+        for class_id, target_count in balanced_distribution.items():
+            print(f"\n🎯 Processing class {class_id} ({self.class_names.get(class_id, f'class_{class_id}')})")
+            print(f"   Target instances: {target_count}")
+            
+            if class_id not in class_instances_per_file:
+                print(f"   ⚠️  No files found for class {class_id}")
+                continue
+            
+            # Get all files that contain this class
+            files_with_class = list(class_instances_per_file[class_id].keys())
+            instances_per_file = class_instances_per_file[class_id]
+            
+            print(f"   Available files: {len(files_with_class)}")
+            print(f"   Total instances in all files: {sum(instances_per_file.values())}")
+            
+            # Calculate how many files we need
+            total_instances_available = sum(instances_per_file.values())
+            
+            if total_instances_available < target_count:
+                print(f"   ⚠️  Not enough instances available ({total_instances_available} < {target_count})")
+                # Use all available files
+                selected_files[class_id] = files_with_class
+                files_needed_per_class[class_id] = len(files_with_class)
+            else:
+                # Select files to reach target count
+                selected_file_list = []
+                current_count = 0
+                
+                # Sort files by number of instances (descending) for efficiency
+                sorted_files = sorted(files_with_class, key=lambda x: instances_per_file[x], reverse=True)
+                
+                for file_path in sorted_files:
+                    instances_in_file = instances_per_file[file_path]
+                    if current_count + instances_in_file <= target_count:
+                        selected_file_list.append(file_path)
+                        current_count += instances_in_file
+                    elif current_count < target_count:
+                        # Add this file even if it exceeds target slightly
+                        selected_file_list.append(file_path)
+                        current_count += instances_in_file
+                        break
+                    else:
+                        break
+                
+                selected_files[class_id] = selected_file_list
+                files_needed_per_class[class_id] = len(selected_file_list)
+                
+                print(f"   Selected files: {len(selected_file_list)}")
+                print(f"   Achieved instances: {current_count}")
+        
+        return selected_files, files_needed_per_class
     
     def create_balanced_dataset(self, selected_files, balanced_distribution):
-        """Create the balanced dataset"""
-        print("\n🔄 Creating balanced dataset...")
+        """Create the balanced dataset with exact instance balancing"""
+        print("\n🔄 Creating balanced dataset with exact instance balancing...")
         
         # Track which files we've already copied to avoid duplicates
         copied_files = set()
@@ -277,12 +326,19 @@ class DatasetBalancer:
             print(f"   Val: {len(files[train_end:val_end])} files")
             print(f"   Test: {len(files[val_end:])} files")
         
-        # Copy files to balanced dataset
+        # Copy files to balanced dataset with instance filtering
         for split, files in balanced_splits.items():
-            print(f"\n📁 Copying {split} files...")
+            print(f"\n📁 Copying {split} files with instance balancing...")
             
             split_files = list(set(files))  # Remove duplicates
             random.shuffle(split_files)
+            
+            # Track instances per class for this split
+            split_targets = {}
+            for class_id, target_count in balanced_distribution.items():
+                split_targets[class_id] = int(target_count * split_ratios[splits.index(split)])
+            
+            class_instances_copied = defaultdict(int)
             
             for file_path in tqdm(split_files, desc=f"Copying {split} files"):
                 if file_path in copied_files:
@@ -307,11 +363,37 @@ class DatasetBalancer:
                     label_dst = self.output_path / 'labels' / split / label_src.name
                     image_dst = self.output_path / 'images' / split / f"{label_src.stem}.jpg"
                     
-                    # Copy files
+                    # Check if we should copy this file based on instance limits
+                    should_copy = False
+                    filtered_annotations = []
+                    
                     if label_src.exists() and image_src.exists():
-                        shutil.copy2(label_src, label_dst)
-                        shutil.copy2(image_src, image_dst)
-                        copied_files.add(file_path)
+                        # Read original annotations
+                        with open(label_src, 'r') as f:
+                            annotations = f.readlines()
+                        
+                        # Filter annotations based on class limits
+                        for line in annotations:
+                            line = line.strip()
+                            if line:
+                                parts = line.split()
+                                if len(parts) >= 5:
+                                    class_id = int(parts[0])
+                                    if class_instances_copied[class_id] < split_targets.get(class_id, float('inf')):
+                                        filtered_annotations.append(line)
+                                        class_instances_copied[class_id] += 1
+                                        should_copy = True
+                        
+                        # Only copy if we have annotations to keep
+                        if should_copy and filtered_annotations:
+                            # Copy image
+                            shutil.copy2(image_src, image_dst)
+                            
+                            # Write filtered annotations
+                            with open(label_dst, 'w') as f:
+                                f.write('\n'.join(filtered_annotations))
+                            
+                            copied_files.add(file_path)
                     
                 except Exception as e:
                     print(f"⚠️  Error copying {file_path}: {e}")
@@ -319,6 +401,20 @@ class DatasetBalancer:
         
         print(f"\n✅ Balanced dataset created at: {self.output_path}")
         print(f"📊 Total files copied: {len(copied_files)}")
+        
+        # Print final balance summary
+        print("\n" + "="*60)
+        print("🎯 FINAL BALANCE SUMMARY")
+        print("="*60)
+        
+        for class_id, target_count in balanced_distribution.items():
+            class_name = self.class_names.get(class_id, f"class_{class_id}")
+            actual_files = len(selected_files.get(class_id, []))
+            print(f"Class {class_id} ({class_name}):")
+            print(f"  Target instances: {target_count:,}")
+            print(f"  Files selected: {actual_files}")
+            print(f"  Status: {'✅ Balanced' if actual_files > 0 else '❌ No files'}")
+            print()
     
     def create_balanced_dataset_yaml(self):
         """Create dataset.yaml for balanced dataset"""
@@ -385,6 +481,78 @@ class DatasetBalancer:
             for class_id, count in sorted(class_counts.items()):
                 class_name = self.class_names.get(class_id, f"class_{class_id}")
                 print(f"     {class_id} ({class_name}): {count} instances")
+        
+        # Verify balance quality
+        self.verify_balance_quality()
+    
+    def verify_balance_quality(self):
+        """Verify the quality of the balanced dataset"""
+        print("\n🔍 Verifying balance quality...")
+        
+        # Combine all splits
+        total_class_counts = defaultdict(int)
+        for split, stats in self.balanced_stats.items():
+            for class_id, count in stats['class_counts'].items():
+                total_class_counts[class_id] += count
+        
+        if not total_class_counts:
+            print("❌ No data found in balanced dataset!")
+            return
+        
+        # Calculate balance metrics
+        counts = list(total_class_counts.values())
+        min_count = min(counts)
+        max_count = max(counts)
+        mean_count = np.mean(counts)
+        std_count = np.std(counts)
+        cv = std_count / mean_count if mean_count > 0 else 0
+        
+        print(f"\n📊 Balance Quality Metrics:")
+        print(f"   Minimum instances: {min_count:,}")
+        print(f"   Maximum instances: {max_count:,}")
+        print(f"   Mean instances: {mean_count:.1f}")
+        print(f"   Standard deviation: {std_count:.1f}")
+        print(f"   Coefficient of variation: {cv:.4f}")
+        
+        # Check balance quality
+        if cv < 0.1:
+            balance_quality = "✅ EXCELLENT"
+        elif cv < 0.2:
+            balance_quality = "✅ GOOD"
+        elif cv < 0.3:
+            balance_quality = "⚠️  FAIR"
+        else:
+            balance_quality = "❌ POOR"
+        
+        print(f"   Balance quality: {balance_quality}")
+        
+        # Show class-wise balance
+        print(f"\n📋 Class-wise Balance:")
+        for class_id in sorted(total_class_counts.keys()):
+            count = total_class_counts[class_id]
+            class_name = self.class_names.get(class_id, f"class_{class_id}")
+            percentage = (count / mean_count) * 100 if mean_count > 0 else 0
+            status = "✅" if abs(percentage - 100) < 10 else "⚠️" if abs(percentage - 100) < 20 else "❌"
+            print(f"   {status} Class {class_id} ({class_name}): {count:,} instances ({percentage:.1f}% of mean)")
+        
+        # Save balance verification
+        verification_data = {
+            'balance_metrics': {
+                'min_count': int(min_count),
+                'max_count': int(max_count),
+                'mean_count': float(mean_count),
+                'std_count': float(std_count),
+                'coefficient_of_variation': float(cv),
+                'balance_quality': balance_quality
+            },
+            'class_distribution': dict(total_class_counts),
+            'class_percentages': {class_id: (count / mean_count) * 100 for class_id, count in total_class_counts.items()}
+        }
+        
+        with open(self.output_path / 'balance_verification.json', 'w') as f:
+            json.dump(verification_data, f, indent=2)
+        
+        print(f"\n📄 Balance verification saved to: {self.output_path / 'balance_verification.json'}")
     
     def plot_balanced_distribution(self):
         """Plot balanced class distribution"""
@@ -534,7 +702,7 @@ class DatasetBalancer:
             return False
         
         # Step 4: Select balanced samples
-        selected_files = self.select_balanced_samples(balanced_distribution)
+        selected_files, files_needed_per_class = self.select_balanced_samples(balanced_distribution)
         
         # Step 5: Create balanced dataset
         self.create_balanced_dataset(selected_files, balanced_distribution)
