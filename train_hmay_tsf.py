@@ -772,7 +772,7 @@ def main():
     """Main function for advanced training"""
     parser = argparse.ArgumentParser(description='Advanced HMAY-TSF Training')
     parser.add_argument('--data', type=str, default='./dataset/dataset.yaml', help='Dataset YAML file')
-    parser.add_argument('--epochs', type=int, default=200, help='Number of epochs')
+    parser.add_argument('--epochs', type=int, default=10, help='Number of epochs')
     parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
     parser.add_argument('--img-size', type=int, default=640, help='Image size')
     parser.add_argument('--model-size', type=str, default='s', help='Model size (n, s, m, l, x)')
