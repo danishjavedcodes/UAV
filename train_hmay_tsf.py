@@ -327,9 +327,10 @@ class HMAYTSFTrainer:
         ], weight_decay=self.config['weight_decay'])
         
         # Learning rate scheduler
+        T_0 = max(1, self.config['epochs'] // 3)  # Ensure T_0 is at least 1
         self.scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
             self.optimizer,
-            T_0=self.config['epochs'] // 3,
+            T_0=T_0,
             T_mult=2,
             eta_min=self.config['lr'] * 0.01
         )
@@ -361,8 +362,12 @@ class HMAYTSFTrainer:
         progress_bar = tqdm(self.train_loader, desc=f'Epoch {self.current_epoch + 1}')
         
         for batch_idx, batch in enumerate(progress_bar):
-            # Handle different data formats
-            if isinstance(batch, (list, tuple)):
+            # Handle data format from VisDroneDataset
+            if isinstance(batch, dict):
+                images = batch['image']
+                # Convert bboxes and class_labels to targets format if needed
+                targets = None  # For now, we'll use None and handle in loss function
+            elif isinstance(batch, (list, tuple)):
                 images, targets = batch
             else:
                 images = batch
@@ -421,8 +426,11 @@ class HMAYTSFTrainer:
         
         with torch.no_grad():
             for batch in tqdm(self.val_loader, desc='Validation'):
-                # Handle different data formats
-                if isinstance(batch, (list, tuple)):
+                # Handle data format from VisDroneDataset
+                if isinstance(batch, dict):
+                    images = batch['image']
+                    targets = None  # For now, we'll use None and handle in loss function
+                elif isinstance(batch, (list, tuple)):
                     images, targets = batch
                 else:
                     images = batch

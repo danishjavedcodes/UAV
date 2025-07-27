@@ -113,8 +113,23 @@ class VisDroneDataset(Dataset):
             bboxes = []
             class_labels = []
         else:
-            bboxes = labels[:, 1:].tolist()  # x_center, y_center, width, height
-            class_labels = labels[:, 0].astype(int).tolist()
+            # Filter out invalid bounding boxes
+            valid_labels = []
+            for label in labels:
+                if len(label) >= 5:
+                    class_id, x_center, y_center, width, height = label[:5]
+                    # Check if coordinates are valid (within [0, 1] range)
+                    if (0 <= x_center <= 1 and 0 <= y_center <= 1 and 
+                        0 < width <= 1 and 0 < height <= 1):
+                        valid_labels.append(label)
+            
+            if len(valid_labels) == 0:
+                bboxes = []
+                class_labels = []
+            else:
+                valid_labels = np.array(valid_labels)
+                bboxes = valid_labels[:, 1:].tolist()  # x_center, y_center, width, height
+                class_labels = valid_labels[:, 0].astype(int).tolist()
         
         # Apply augmentations
         transformed = self.transform(image=image, bboxes=bboxes, class_labels=class_labels)
