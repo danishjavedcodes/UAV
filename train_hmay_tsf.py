@@ -450,7 +450,7 @@ class AdvancedHMAYTSFTrainer:
         
         print(f"Starting advanced training with:")
         print(f"  Data: {data_yaml}")
-        print(f"  Epochs: {epochs}")
+        print(f"  Epochs: {epochs} ")
         print(f"  Image size: {img_size}")
         print(f"  Batch size: {batch_size}")
         print(f"  Device: {self.device}")
