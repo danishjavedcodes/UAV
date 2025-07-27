@@ -3,11 +3,14 @@ dataset/*.zip
 dataset/*.cache
 
 # Model weights and training outputs
+./runs
 runs/
 *.pt
 *.onnx
 *.engine
 *.tflite
+*.csv
+*.png
 
 # Python cache
 __pycache__/
