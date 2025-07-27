@@ -1,7 +1,9 @@
 # Dataset files (too large for GitHub)
+dataset/
+dataset/*
+!dataset/dataset.yaml
 dataset/*.zip
 dataset/*.cache
-./dataset/
 
 # Model weights and training outputs
 ./runs
