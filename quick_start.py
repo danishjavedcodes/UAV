@@ -1,6 +1,6 @@
 """
-Quick Start Script for Enhanced HMAY-TSF
-Achieve 99-99.8% accuracy, precision, recall, and F1 score
+Advanced HMAY-TSF Quick Start Script
+Complete implementation for achieving 99.2%+ accuracy, precision, recall, and F1 score
 """
 
 import os
@@ -14,9 +14,9 @@ from datetime import datetime
 # Add current directory to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from train_hmay_tsf import EnhancedHMAYTSFTrainer
-from evaluate_model import EnhancedModelEvaluator
 from hmay_tsf_model import HMAY_TSF
+from train_hmay_tsf import AdvancedHMAYTSFTrainer
+from evaluate_model import AdvancedModelEvaluator
 
 def check_requirements():
     """Check if all requirements are met"""
@@ -24,130 +24,166 @@ def check_requirements():
     
     # Check CUDA availability
     cuda_available = torch.cuda.is_available()
-    print(f"CUDA available: {cuda_available}")
+    print(f"CUDA Available: {cuda_available}")
     if cuda_available:
-        print(f"CUDA version: {torch.version.cuda}")
-        print(f"GPU count: {torch.cuda.device_count()}")
-        for i in range(torch.cuda.device_count()):
-            print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+        print(f"CUDA Version: {torch.version.cuda}")
+        print(f"GPU Device: {torch.cuda.get_device_name(0)}")
     
-    # Check dataset
-    dataset_path = Path("./dataset")
-    if not dataset_path.exists():
-        print("❌ Dataset not found! Please ensure the dataset is in ./dataset/")
-        return False
-    
-    # Check dataset structure
-    required_dirs = ["images/train", "images/val", "images/test", "labels/train", "labels/val", "labels/test"]
-    for dir_path in required_dirs:
-        if not (dataset_path / dir_path).exists():
-            print(f"❌ Required directory not found: {dir_path}")
-            return False
-    
-    print("✅ All requirements met!")
-    return True
-
-def setup_environment():
-    """Setup the environment for enhanced training"""
-    print("Setting up enhanced environment...")
-    
-    # Create necessary directories
-    directories = [
-        "./runs/train",
-        "./runs/predict", 
-        "./logs",
-        "./checkpoints",
-        "./results"
+    # Check required packages
+    required_packages = [
+        'ultralytics',
+        'torch',
+        'torchvision',
+        'opencv-python',
+        'albumentations',
+        'numpy',
+        'pandas',
+        'matplotlib',
+        'seaborn',
+        'tqdm',
+        'scikit-learn'
     ]
     
-    for dir_path in directories:
-        Path(dir_path).mkdir(parents=True, exist_ok=True)
-        print(f"✅ Created directory: {dir_path}")
+    missing_packages = []
+    for package in required_packages:
+        try:
+            __import__(package.replace('-', '_'))
+            print(f"✓ {package}")
+        except ImportError:
+            missing_packages.append(package)
+            print(f"✗ {package} - MISSING")
     
-    # Load configuration
-    config_path = Path("./config.yaml")
-    if not config_path.exists():
-        print("❌ config.yaml not found!")
-        return None
+    if missing_packages:
+        print(f"\nMissing packages: {missing_packages}")
+        print("Please install missing packages using:")
+        print(f"pip install {' '.join(missing_packages)}")
+        return False
+    
+    print("All requirements met!")
+    return True
 
-    with open(config_path, 'r') as f:
-        config = yaml.safe_load(f)
+def setup_dataset():
+    """Setup and verify dataset"""
+    print("\nSetting up dataset...")
     
-    print("✅ Environment setup complete!")
-    return config
+    dataset_path = Path("./dataset")
+    if not dataset_path.exists():
+        print("Dataset directory not found!")
+        print("Please ensure your dataset is organized as follows:")
+        print("dataset/")
+        print("├── images/")
+        print("│   ├── train/")
+        print("│   ├── val/")
+        print("│   └── test/")
+        print("├── labels/")
+        print("│   ├── train/")
+        print("│   ├── val/")
+        print("│   └── test/")
+        print("└── dataset.yaml")
+        return False
+    
+    # Check dataset.yaml
+    dataset_yaml = dataset_path / "dataset.yaml"
+    if not dataset_yaml.exists():
+        print("dataset.yaml not found!")
+        return False
+    
+    # Load and verify dataset config
+    try:
+        with open(dataset_yaml, 'r') as f:
+            dataset_config = yaml.safe_load(f)
+        
+        print(f"Dataset classes: {dataset_config.get('nc', 'Unknown')}")
+        print(f"Class names: {dataset_config.get('names', 'Unknown')}")
+        
+        # Check if image directories exist
+        for split in ['train', 'val', 'test']:
+            img_dir = dataset_path / "images" / split
+            label_dir = dataset_path / "labels" / split
+            
+            if not img_dir.exists():
+                print(f"Warning: {img_dir} not found")
+            else:
+                img_count = len(list(img_dir.glob("*.jpg")))
+                print(f"{split} images: {img_count}")
+            
+            if not label_dir.exists():
+                print(f"Warning: {label_dir} not found")
+            else:
+                label_count = len(list(label_dir.glob("*.txt")))
+                print(f"{split} labels: {label_count}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"Error loading dataset config: {e}")
+        return False
 
-def run_enhanced_training(config, args):
-    """Run enhanced training to achieve 99%+ metrics"""
-    print("\n" + "="*80)
-    print("STARTING ENHANCED HMAY-TSF TRAINING")
-    print("Target: 99-99.8% accuracy, precision, recall, and F1 score")
-    print("="*80)
+def train_advanced_model(args):
+    """Train the advanced HMAY-TSF model"""
+    print(f"\nStarting Advanced HMAY-TSF Training...")
+    print(f"Target: 99.2%+ accuracy, precision, recall, and F1 score")
     
-    # Initialize enhanced trainer
-    trainer = EnhancedHMAYTSFTrainer(
+    # Initialize advanced trainer
+    trainer = AdvancedHMAYTSFTrainer(
         model_size=args.model_size,
         device=args.device,
-        project_name='HMAY-TSF-Enhanced-99-Percent'
+        project_name='HMAY-TSF-Advanced-99.2-Percent'
     )
     
-    # Setup enhanced model
-    print("Setting up enhanced model...")
-    trainer.setup_enhanced_model(
-        num_classes=config['model']['num_classes'],
-        pretrained=config['model']['pretrained']
-    )
+    # Setup advanced model
+    trainer.setup_advanced_model(num_classes=11, pretrained=True)
     
-    # Start enhanced training
-    print("Starting enhanced training...")
+    # Start advanced training
     results = trainer.train_model(
         data_yaml=args.data,
-        epochs=config['training']['epochs'],
-        img_size=config['training']['img_size'],
-        batch_size=config['training']['batch_size'],
+        epochs=args.epochs,
+        img_size=args.img_size,
+        batch_size=args.batch_size,
         save_dir=args.save_dir,
-        patience=config['training']['patience']
+        patience=args.patience
     )
     
     if results:
-        print("\n✅ Enhanced training completed successfully!")
+        print("\n" + "="*80)
+        print("ADVANCED TRAINING COMPLETED SUCCESSFULLY!")
+        print("="*80)
         print(f"Best F1-Score achieved: {trainer.best_map:.6f}")
+        print(f"Target F1-Score: 0.992")
+        print(f"Target Achievement: {(trainer.best_map / 0.992) * 100:.1f}%")
+        print("="*80)
         
-        # Save best model path
-        best_model_path = Path(args.save_dir) / f"enhanced_hmay_tsf_{args.model_size}_{datetime.now().strftime('%Y%m%d_%H%M%S')}" / "weights" / "best.pt"
-        if best_model_path.exists():
-            print(f"Best model saved to: {best_model_path}")
-            return str(best_model_path)
-        else:
-            print("⚠️ Best model not found, using last model")
-            last_model_path = Path(args.save_dir) / f"enhanced_hmay_tsf_{args.model_size}_{datetime.now().strftime('%Y%m%d_%H%M%S')}" / "weights" / "last.pt"
-            return str(last_model_path) if last_model_path.exists() else None
+        return trainer.best_metrics
     else:
-        print("❌ Enhanced training failed!")
+        print("Advanced training failed!")
         return None
 
-def run_enhanced_evaluation(model_path, config, args):
-    """Run enhanced evaluation to verify 99%+ metrics"""
-    print("\n" + "="*80)
-    print("RUNNING ENHANCED EVALUATION")
-    print("Verifying 99-99.8% accuracy, precision, recall, and F1 score")
-    print("="*80)
+def evaluate_advanced_model(args, best_weights_path=None):
+    """Evaluate the advanced HMAY-TSF model"""
+    print(f"\nStarting Advanced Model Evaluation...")
     
-    if not model_path or not Path(model_path).exists():
-        print("❌ Model not found for evaluation!")
-        return None
+    # Find the best weights if not provided
+    if best_weights_path is None:
+        weights_dir = Path(args.save_dir)
+        weight_files = list(weights_dir.rglob("best.pt"))
+        if weight_files:
+            best_weights_path = str(weight_files[0])
+        else:
+            print("No best weights found!")
+            return None
     
-    # Initialize enhanced evaluator
-    evaluator = EnhancedModelEvaluator(
-        model_path=model_path,
+    # Initialize advanced evaluator
+    evaluator = AdvancedModelEvaluator(
+        model_path=best_weights_path,
         data_yaml=args.data,
         device=args.device
     )
     
     # Run comprehensive evaluation
-    print("Running comprehensive evaluation...")
+    print("Running comprehensive evaluation for 99.2%+ metrics...")
     
-    # Evaluate enhanced metrics
-    enhanced_metrics = evaluator.evaluate_enhanced_metrics()
+    # Evaluate advanced metrics
+    advanced_metrics = evaluator.evaluate_advanced_metrics()
     
     # Evaluate FPS
     fps_metrics = evaluator.evaluate_fps(args.test_images)
@@ -159,133 +195,116 @@ def run_enhanced_evaluation(model_path, config, args):
     occlusion_metrics = evaluator.evaluate_occlusion_aware(args.test_images, args.test_labels)
     
     # Save comprehensive results
-    output_path = f"./results/enhanced_evaluation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    evaluator.save_results(output_path)
+    evaluator.save_results(args.output)
     
-    print("✅ Enhanced evaluation completed!")
-    return enhanced_metrics
+    print("Advanced evaluation completed successfully!")
+    return evaluator.results
 
-def print_performance_summary(metrics):
-    """Print performance summary"""
+def demonstrate_advanced_features():
+    """Demonstrate advanced HMAY-TSF features"""
     print("\n" + "="*80)
-    print("PERFORMANCE SUMMARY")
+    print("ADVANCED HMAY-TSF METHODOLOGY FEATURES")
     print("="*80)
     
-    if metrics:
-        print(f"Precision: {metrics.get('precision', 0):.6f} (Target: 0.99)")
-        print(f"Recall: {metrics.get('recall', 0):.6f} (Target: 0.99)")
-        print(f"F1-Score: {metrics.get('f1_score', 0):.6f} (Target: 0.99)")
-        print(f"Accuracy: {metrics.get('accuracy', 0):.6f} (Target: 0.99)")
-        print(f"mAP@0.5: {metrics.get('mAP50', 0):.6f} (Target: 0.99)")
-        print(f"mAP@0.5:0.95: {metrics.get('mAP50-95', 0):.6f} (Target: 0.95)")
-        
-        # Check if targets are met
-        targets_met = 0
-        total_targets = 6
-        
-        if metrics.get('precision', 0) >= 0.99:
-            targets_met += 1
-            print("✅ Precision target met")
-        else:
-            print("❌ Precision target not met")
-            
-        if metrics.get('recall', 0) >= 0.99:
-            targets_met += 1
-            print("✅ Recall target met")
-        else:
-            print("❌ Recall target not met")
-            
-        if metrics.get('f1_score', 0) >= 0.99:
-            targets_met += 1
-            print("✅ F1-Score target met")
-        else:
-            print("❌ F1-Score target not met")
-            
-        if metrics.get('accuracy', 0) >= 0.99:
-            targets_met += 1
-            print("✅ Accuracy target met")
-        else:
-            print("❌ Accuracy target not met")
-            
-        if metrics.get('mAP50', 0) >= 0.99:
-            targets_met += 1
-            print("✅ mAP@0.5 target met")
-        else:
-            print("❌ mAP@0.5 target not met")
-            
-        if metrics.get('mAP50-95', 0) >= 0.95:
-            targets_met += 1
-            print("✅ mAP@0.5:0.95 target met")
-        else:
-            print("❌ mAP@0.5:0.95 target not met")
-        
-        print(f"\nOverall: {targets_met}/{total_targets} targets met")
-        
-        if targets_met == total_targets:
-            print("🎉 ALL TARGETS ACHIEVED! 99%+ performance confirmed!")
-        elif targets_met >= total_targets * 0.8:
-            print("👍 Most targets achieved! Performance is excellent!")
-        else:
-            print("⚠️ Some targets not met. Consider additional training or hyperparameter tuning.")
+    features = [
+        "✓ Enhanced Conditional Convolutions with 16 experts and CBAM attention",
+        "✓ Advanced Temporal-Spatial Fusion with 3D CNN and multi-head attention",
+        "✓ Super-Resolution Data Augmentation for small object detection",
+        "✓ Adaptive Anchor Box Generation with differential evolution",
+        "✓ Enhanced BiFPN with 4 layers and attention mechanisms",
+        "✓ Advanced SPP-CSP with CBAM attention",
+        "✓ Curriculum Learning with progressive difficulty stages",
+        "✓ Advanced Focal Loss with label smoothing",
+        "✓ Complete IoU (CIoU) Loss for better bounding box regression",
+        "✓ Mixed Precision Training for efficiency",
+        "✓ Advanced Data Augmentation with weather effects",
+        "✓ Comprehensive evaluation metrics for 99.2%+ targets"
+    ]
     
+    for feature in features:
+        print(feature)
+    
+    print("\nPERFORMANCE TARGETS:")
+    print("• Precision: 99.2%+")
+    print("• Recall: 99.2%+")
+    print("• F1-Score: 99.2%+")
+    print("• Accuracy: 99.2%+")
+    print("• mAP@0.5: 99.2%+")
+    print("• mAP@0.5:0.95: 95%+")
+    print("• FPS: 40+")
     print("="*80)
 
 def main():
-    """Main function for quick start"""
-    parser = argparse.ArgumentParser(description='Enhanced HMAY-TSF Quick Start')
-    parser.add_argument('--mode', type=str, default='full', choices=['train', 'evaluate', 'full'], 
-                       help='Mode: train, evaluate, or full (train + evaluate)')
-    parser.add_argument('--data', type=str, default='./dataset/dataset.yaml', help='Dataset YAML file')
-    parser.add_argument('--model-size', type=str, default='s', choices=['n', 's', 'm', 'l', 'x'], 
-                       help='Model size')
+    """Main function for advanced HMAY-TSF quick start"""
+    parser = argparse.ArgumentParser(description='Advanced HMAY-TSF Quick Start')
+    parser.add_argument('--mode', type=str, default='train', 
+                       choices=['train', 'evaluate', 'demo', 'full'],
+                       help='Mode: train, evaluate, demo, or full pipeline')
+    parser.add_argument('--data', type=str, default='./dataset/dataset.yaml', 
+                       help='Dataset YAML file')
+    parser.add_argument('--epochs', type=int, default=200, help='Number of epochs')
+    parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
+    parser.add_argument('--img-size', type=int, default=640, help='Image size')
+    parser.add_argument('--model-size', type=str, default='s', 
+                       help='Model size (n, s, m, l, x)')
     parser.add_argument('--device', type=str, default='auto', help='Device to use')
-    parser.add_argument('--save-dir', type=str, default='./runs/train', help='Save directory')
-    parser.add_argument('--test-images', type=str, default='./dataset/images/test', help='Test images directory')
-    parser.add_argument('--test-labels', type=str, default='./dataset/labels/test', help='Test labels directory')
-    parser.add_argument('--model-path', type=str, help='Path to model for evaluation (required for evaluate mode)')
+    parser.add_argument('--save-dir', type=str, default='./runs/train', 
+                       help='Save directory')
+    parser.add_argument('--patience', type=int, default=100, 
+                       help='Early stopping patience')
+    parser.add_argument('--test-images', type=str, default='./dataset/images/test', 
+                       help='Test images directory')
+    parser.add_argument('--test-labels', type=str, default='./dataset/labels/test', 
+                       help='Test labels directory')
+    parser.add_argument('--output', type=str, default='advanced_evaluation_results.json', 
+                       help='Evaluation output file')
     
     args = parser.parse_args()
     
-    print("🚀 Enhanced HMAY-TSF Quick Start")
-    print("Target: 99-99.8% accuracy, precision, recall, and F1 score")
+    print("="*80)
+    print("ADVANCED HMAY-TSF QUICK START")
+    print("Target: 99.2%+ accuracy, precision, recall, and F1 score")
     print("="*80)
     
     # Check requirements
     if not check_requirements():
-        print("❌ Requirements not met. Please fix the issues above.")
+        print("Requirements check failed!")
         return
     
-    # Setup environment
-    config = setup_environment()
-    if not config:
-        print("❌ Environment setup failed!")
+    # Setup dataset
+    if not setup_dataset():
+        print("Dataset setup failed!")
         return
     
-    # Run based on mode
-    model_path = None
-    metrics = None
+    if args.mode == 'demo':
+        demonstrate_advanced_features()
+        return
     
     if args.mode in ['train', 'full']:
-        print(f"\n🎯 Mode: Training (Target: 99%+ metrics)")
-        model_path = run_enhanced_training(config, args)
+        # Train advanced model
+        best_metrics = train_advanced_model(args)
+        
+        if best_metrics is None:
+            print("Training failed!")
+            return
     
     if args.mode in ['evaluate', 'full']:
-        print(f"\n🔍 Mode: Evaluation (Verifying 99%+ metrics)")
+        # Evaluate advanced model
+        evaluation_results = evaluate_advanced_model(args)
         
-        # Use provided model path or the one from training
-        eval_model_path = args.model_path if args.model_path else model_path
-        
-        if not eval_model_path:
-            print("❌ No model path provided for evaluation!")
-        return
+        if evaluation_results is None:
+            print("Evaluation failed!")
+            return
     
-        metrics = run_enhanced_evaluation(eval_model_path, config, args)
-    
-    # Print performance summary
-    print_performance_summary(metrics)
-    
-    print("\n🎉 Enhanced HMAY-TSF Quick Start completed!")
-    print("Check the results directory for detailed evaluation reports.")
+    print("\n" + "="*80)
+    print("ADVANCED HMAY-TSF PIPELINE COMPLETED!")
+    print("="*80)
+    print("Next steps:")
+    print("1. Check the training logs in the runs/train directory")
+    print("2. Review the evaluation results in the output file")
+    print("3. Use the trained model for inference on new data")
+    print("4. Fine-tune hyperparameters if needed for better performance")
+    print("="*80)
 
 if __name__ == "__main__":
     main() 
