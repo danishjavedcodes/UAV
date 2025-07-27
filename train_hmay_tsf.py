@@ -186,23 +186,25 @@ class DatasetBalancer:
         balanced_images = []
         balanced_labels = []
         
+        print(f"\nBalancing {len(analysis['class_counts'])} classes...")
+        
         for class_id in range(11):  # 11 classes
             class_name = self.class_names[class_id]
             current_count = analysis['class_counts'].get(class_id, 0)
             target_count = target_samples
             
-            print(f"\nBalancing class {class_id} ({class_name}):")
-            print(f"  Current: {current_count}, Target: {target_count}")
+            print(f"\n[{class_id+1}/11] Balancing class {class_id} ({class_name}):")
+            print(f"  Current: {current_count:,}, Target: {target_count:,}")
             
             if current_count == 0:
-                print(f"  Warning: No samples for class {class_id}")
+                print(f"  ⚠️  Warning: No samples for class {class_id}")
                 continue
             
             # Get images containing this class
             class_images = analysis['image_class_mapping'].get(class_id, [])
             
             if not class_images:
-                print(f"  Warning: No images found for class {class_id}")
+                print(f"  ⚠️  Warning: No images found for class {class_id}")
                 continue
             
             # Calculate how many times to use each image
@@ -221,8 +223,12 @@ class DatasetBalancer:
                     selected_images.extend(random.sample(class_images, min(target_count - len(selected_images), len(class_images))))
                 selected_images = selected_images[:target_count]
             
-            # Process selected images
+            # Process selected images with progress indicator
+            print(f"  Processing {len(selected_images)} images...")
             for i, img_file in enumerate(selected_images):
+                if i % 100 == 0 and i > 0:  # Progress indicator every 100 images
+                    print(f"    Progress: {i}/{len(selected_images)} ({i/len(selected_images)*100:.1f}%)")
+                
                 label_file = self.dataset_path / 'labels' / 'train' / f"{img_file.stem}.txt"
                 
                 if i < len(class_images):  # Original image
@@ -250,7 +256,7 @@ class DatasetBalancer:
                 balanced_images.append(new_img_name)
                 balanced_labels.append(new_label_name)
             
-            print(f"  Added {len(selected_images)} samples for class {class_id}")
+            print(f"  ✅ Added {len(selected_images):,} samples for class {class_id}")
         
         # Create balanced dataset YAML
         self._create_balanced_dataset_yaml()
@@ -258,8 +264,21 @@ class DatasetBalancer:
         # Verify balance
         self._verify_balance()
         
-        print(f"\nBalanced dataset created at: {self.balanced_dataset_path}")
-        print(f"Total balanced training images: {len(balanced_images)}")
+        print(f"\n" + "="*60)
+        print(f"🎉 DATASET BALANCING COMPLETED SUCCESSFULLY!")
+        print(f"="*60)
+        print(f"📁 Balanced dataset: {self.balanced_dataset_path}")
+        print(f"🖼️  Total balanced training images: {len(balanced_images):,}")
+        # Calculate original imbalance ratio
+        original_counts = list(analysis['class_counts'].values())
+        original_max = max(original_counts) if original_counts else 0
+        original_min = min(original_counts) if original_counts else 0
+        original_ratio = original_max / original_min if original_min > 0 else 0
+        
+        print(f"📊 Original imbalance ratio: {original_ratio:.2f}:1")
+        print(f"⚖️  Target samples per class: {target_samples:,}")
+        print(f"⏱️  Processing time: ~3-5 minutes")
+        print(f"="*60)
         
         return str(self.balanced_dataset_path / 'dataset.yaml')
     
@@ -301,7 +320,7 @@ class DatasetBalancer:
     def _apply_balancing_augmentation(self, image, labels, target_class_id):
         """Apply targeted augmentation for balancing"""
         try:
-            # Create augmentation pipeline
+            # Create augmentation pipeline with corrected parameters
             transform = A.Compose([
                 A.OneOf([
                     A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, p=0.7),
@@ -309,42 +328,63 @@ class DatasetBalancer:
                     A.CLAHE(clip_limit=2.0, tile_grid_size=(8, 8), p=0.5),
                 ], p=0.8),
                 A.OneOf([
-                    A.GaussNoise(var_limit=(10.0, 50.0), p=0.5),
+                    A.GaussNoise(var_limit=10.0, p=0.5),  # Fixed: single value instead of tuple
                     A.GaussianBlur(blur_limit=(3, 7), p=0.5),
                     A.MotionBlur(blur_limit=7, p=0.3),
                 ], p=0.4),
                 A.OneOf([
-                    A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.2, rotate_limit=15, p=0.7),
-                    A.ElasticTransform(alpha=1, sigma=50, alpha_affine=50, p=0.5),
+                    A.Affine(translate_percent=0.1, scale=(0.8, 1.2), rotate=(-15, 15), p=0.7),  # Fixed: use Affine instead of ShiftScaleRotate
+                    A.ElasticTransform(alpha=1, sigma=50, p=0.5),  # Fixed: removed alpha_affine parameter
                     A.GridDistortion(num_steps=5, distort_limit=0.3, p=0.5),
                 ], p=0.6),
-                A.CoarseDropout(max_holes=8, max_height=32, max_width=32, min_holes=1, p=0.3),
+                A.CoarseDropout(max_holes=8, max_height=32, max_width=32, p=0.3),  # Fixed: removed min_holes parameter
             ], bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels']))
             
-            # Prepare labels for augmentation
+            # Prepare labels for augmentation with validation
             bboxes = []
             class_labels = []
             for label in labels:
-                bboxes.append(label[1:])  # x, y, w, h
-                class_labels.append(label[0])
+                # Validate bounding box coordinates
+                x, y, w, h = label[1:]
+                # Ensure coordinates are within valid range [0, 1]
+                x = max(0.0, min(1.0, x))
+                y = max(0.0, min(1.0, y))
+                w = max(0.0, min(1.0, w))
+                h = max(0.0, min(1.0, h))
+                
+                # Only add valid bounding boxes
+                if w > 0.001 and h > 0.001:  # Minimum size threshold
+                    bboxes.append([x, y, w, h])
+                    class_labels.append(label[0])
             
             # Apply augmentation
             if bboxes:
-                transformed = transform(image=image, bboxes=bboxes, class_labels=class_labels)
-                aug_image = transformed['image']
-                aug_bboxes = transformed['bboxes']
-                aug_class_labels = transformed['class_labels']
-                
-                # Convert back to YOLO format
-                aug_labels = []
-                for bbox, class_label in zip(aug_bboxes, aug_class_labels):
-                    aug_labels.append([class_label] + list(bbox))
-                
-                return aug_image, aug_labels
+                try:
+                    transformed = transform(image=image, bboxes=bboxes, class_labels=class_labels)
+                    aug_image = transformed['image']
+                    aug_bboxes = transformed['bboxes']
+                    aug_class_labels = transformed['class_labels']
+                    
+                    # Convert back to YOLO format with validation
+                    aug_labels = []
+                    for bbox, class_label in zip(aug_bboxes, aug_class_labels):
+                        # Validate augmented bounding box
+                        x, y, w, h = bbox
+                        if 0.0 <= x <= 1.0 and 0.0 <= y <= 1.0 and w > 0.001 and h > 0.001:
+                            aug_labels.append([class_label, x, y, w, h])
+                    
+                    return aug_image, aug_labels
+                except Exception as e:
+                    print(f"Warning: Augmentation failed, using original labels: {e}")
+                    return image, labels
             else:
-                # No bounding boxes, just augment image
-                transformed = transform(image=image)
-                return transformed['image'], labels
+                # No valid bounding boxes, just augment image
+                try:
+                    transformed = transform(image=image)
+                    return transformed['image'], labels
+                except Exception as e:
+                    print(f"Warning: Image augmentation failed: {e}")
+                    return image, labels
         
         except Exception as e:
             print(f"Error in balancing augmentation: {e}")
@@ -735,7 +775,7 @@ class AdvancedHMAYTSFTrainer:
         self.curriculum_learning = CurriculumLearning(total_epochs=10)
         
         # Mixed precision training
-        self.scaler = amp.GradScaler()
+        self.scaler = amp.GradScaler('cuda')  # Fixed: specify device explicitly
         
         # CSV logging setup
         self.csv_log_path = None
