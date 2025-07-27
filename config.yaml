@@ -1,36 +1,25 @@
-# Advanced HMAY-TSF Configuration File
-# Complete implementation for achieving 99.2%+ accuracy, precision, recall, and F1 score
+# Advanced HMAY-TSF Configuration
+# Target: 99%+ performance by epoch 10
 
-# Model Configuration
-model:
-  size: 's'  # n, s, m, l, x (nano, small, medium, large, extra-large)
-  num_classes: 11
-  pretrained: true
-  freeze_backbone: true  # Freeze backbone initially for fine-tuning
-
-# Advanced Training Configuration
+# Training Configuration
 training:
-  epochs: 200  # Increased epochs for better convergence
-  batch_size: 8  # Reduced for stability and better gradient updates
+  epochs: 10  # Changed from 200 to 10 for 99% target
+  batch_size: 8
   img_size: 640
-  device: 'auto'  # auto, cpu, cuda, 0, 1, etc.
-  workers: 4  # Reduced for stability
-  patience: 100  # Increased patience for better convergence
+  warmup_epochs: 2  # Reduced for faster learning
+  patience: 10  # Reduced for 10-epoch training
   
-  # Advanced Optimization
+  # Advanced optimization
   optimizer: 'AdamW'
-  lr0: 0.001
-  lrf: 0.01
-  momentum: 0.937
-  weight_decay: 0.0005
-  warmup_epochs: 10  # Increased warmup
-  warmup_momentum: 0.8
-  warmup_bias_lr: 0.1
+  lr0: 0.002  # Higher learning rate for faster convergence
+  lrf: 0.1
+  momentum: 0.95
+  weight_decay: 0.001
   
-  # Advanced loss weights for better performance
-  box_loss_weight: 7.5
-  cls_loss_weight: 0.5
-  dfl_loss_weight: 1.5
+  # Advanced loss weights
+  box: 10.0
+  cls: 0.3
+  dfl: 2.0
   
   # Advanced learning rate scheduling
   lr_scheduler: 'cosine_annealing_warm_restarts'

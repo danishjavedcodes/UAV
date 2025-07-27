@@ -132,7 +132,7 @@ class AdvancedIoULoss(nn.Module):
 class CurriculumLearning:
     """Advanced Curriculum Learning for rapid convergence to 99% by epoch 10"""
     
-    def __init__(self, total_epochs=200):
+    def __init__(self, total_epochs=10):
         self.total_epochs = total_epochs
         self.current_epoch = 0
         
@@ -296,7 +296,7 @@ class AdvancedHMAYTSFTrainer:
         self.iou_loss = AdvancedIoULoss(iou_type='ciou')
         
         # Curriculum learning
-        self.curriculum_learning = CurriculumLearning(total_epochs=200)
+        self.curriculum_learning = CurriculumLearning(total_epochs=10)
         
         # Mixed precision training
         self.scaler = amp.GradScaler()
@@ -444,7 +444,7 @@ class AdvancedHMAYTSFTrainer:
                 nn.init.normal_(m.weight, 0, 0.01)
                 nn.init.constant_(m.bias, 0)
     
-    def train_model(self, data_yaml, epochs=200, img_size=640, batch_size=8, 
+    def train_model(self, data_yaml, epochs=10, img_size=640, batch_size=8, 
                    save_dir='./runs/train', patience=100, resume=False):
         """Advanced training with comprehensive optimization"""
         

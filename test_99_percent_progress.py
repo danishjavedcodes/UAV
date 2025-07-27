@@ -16,7 +16,7 @@ def simulate_99_percent_progress():
     print("="*80)
     
     # Initialize curriculum learning
-    curriculum = CurriculumLearning(total_epochs=200)
+    curriculum = CurriculumLearning(total_epochs=10)
     
     print("\n📈 EXPECTED PROGRESS CURVE:")
     print("-" * 80)
