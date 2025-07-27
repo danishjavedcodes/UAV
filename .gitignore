@@ -1,6 +1,7 @@
 # Dataset files (too large for GitHub)
 dataset/*.zip
 dataset/*.cache
+./dataset
 
 # Model weights and training outputs
 ./runs
@@ -72,4 +73,4 @@ temp/
 
 # Jupyter Notebook
 .ipynb_checkpoints
-
+*.pt
