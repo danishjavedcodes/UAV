@@ -159,47 +159,73 @@ def train_advanced_model(epochs=10, batch_size=8, model_size='s'):
         traceback.print_exc()
         return None
 
-def evaluate_advanced_model(args, best_weights_path=None):
-    """Evaluate the advanced HMAY-TSF model"""
-    print(f"\nStarting Advanced Model Evaluation...")
+def evaluate_advanced_model(weights_path=None, create_plots=True):
+    """Evaluate the advanced HMAY-TSF model with plots"""
+    print(f"\n📊 Starting Advanced HMAY-TSF Evaluation")
+    print(f"Target: 99%+ performance verification")
     
-    # Find the best weights if not provided
-    if best_weights_path is None:
-        weights_dir = Path(args.save_dir)
-        weight_files = list(weights_dir.rglob("best.pt"))
-        if weight_files:
-            best_weights_path = str(weight_files[0])
-        else:
-            print("No best weights found!")
+    try:
+        # Find the best model if not specified
+        if weights_path is None:
+            # Look for the best model in runs directory
+            runs_dir = Path("./runs/train")
+            if runs_dir.exists():
+                # Find the most recent training run
+                training_runs = list(runs_dir.glob("advanced_hmay_tsf_*"))
+                if training_runs:
+                    latest_run = max(training_runs, key=lambda x: x.stat().st_mtime)
+                    weights_path = latest_run / "weights" / "best.pt"
+                    if not weights_path.exists():
+                        weights_path = latest_run / "weights" / "last.pt"
+        
+        if weights_path is None or not Path(weights_path).exists():
+            print(f"❌ Model weights not found. Please specify --weights path")
             return None
-    
-    # Initialize advanced evaluator
-    evaluator = AdvancedModelEvaluator(
-        model_path=best_weights_path,
-        data_yaml=args.data,
-        device=args.device
-    )
-    
-    # Run comprehensive evaluation
-    print("Running comprehensive evaluation for 99.2%+ metrics...")
-    
-    # Evaluate advanced metrics
-    advanced_metrics = evaluator.evaluate_advanced_metrics()
-    
-    # Evaluate FPS
-    fps_metrics = evaluator.evaluate_fps(args.test_images)
-    
-    # Evaluate small objects
-    small_obj_metrics = evaluator.evaluate_small_objects(args.test_images, args.test_labels)
-    
-    # Evaluate occlusion awareness
-    occlusion_metrics = evaluator.evaluate_occlusion_aware(args.test_images, args.test_labels)
-    
-    # Save comprehensive results
-    evaluator.save_results(args.output)
-    
-    print("Advanced evaluation completed successfully!")
-    return evaluator.results
+        
+        print(f"Model: {weights_path}")
+        
+        # Initialize evaluator
+        evaluator = AdvancedModelEvaluator(
+            model_path=str(weights_path),
+            data_yaml='./dataset/dataset.yaml',
+            device='auto'
+        )
+        
+        # Run evaluation
+        print(f"\n📊 Running Advanced Evaluation...")
+        metrics = evaluator.evaluate_advanced_metrics()
+        
+        # Create plots if requested
+        if create_plots:
+            print(f"\n🎨 Creating Validation Plots...")
+            test_images_dir = './dataset/images/test'
+            if Path(test_images_dir).exists():
+                evaluator.create_validation_plots(test_images_dir, num_samples=10)
+            else:
+                print(f"⚠️  Test images directory not found: {test_images_dir}")
+        
+        # Save results
+        output_file = 'advanced_evaluation_results.json'
+        evaluator.save_results(output_file)
+        
+        print(f"\n✅ Evaluation completed successfully!")
+        print(f"Results saved to: {output_file}")
+        
+        # Display key metrics
+        print(f"\n📈 KEY METRICS:")
+        print("-" * 40)
+        key_metrics = ['precision', 'recall', 'f1_score', 'accuracy', 'mAP50']
+        for metric in key_metrics:
+            value = metrics.get(metric, 0)
+            print(f"{metric:15}: {value:.6f}")
+        
+        return metrics
+        
+    except Exception as e:
+        print(f"❌ Evaluation failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 def demonstrate_advanced_features():
     """Demonstrate advanced HMAY-TSF features"""
@@ -294,10 +320,11 @@ def main():
             return
         
         # Evaluate model
-        results = evaluate_advanced_model(args.weights)
+        results = evaluate_advanced_model(args.weights, create_plots=True)
         
         if results:
             print(f"\n✅ Evaluation completed! Results saved to advanced_evaluation_results.json")
+            print(f"Plots saved to ./runs/evaluate/plots/")
         else:
             print("❌ Evaluation failed!")
     

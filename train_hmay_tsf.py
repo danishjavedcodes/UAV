@@ -527,9 +527,9 @@ class AdvancedHMAYTSFTrainer:
             'cos_lr': True,  # Cosine learning rate scheduling
             'close_mosaic': 5,  # Close mosaic earlier
             
-            # DEBUGGING AND MONITORING
+            # DEBUGGING AND MONITORING (with error prevention)
             'verbose': True,
-            'plots': True,
+            'plots': True,  # Keep plots enabled for visualization
             'save_period': 1,  # Save every epoch for monitoring
         }
 
