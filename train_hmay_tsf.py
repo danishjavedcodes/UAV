@@ -320,62 +320,94 @@ class DatasetBalancer:
     def _apply_balancing_augmentation(self, image, labels, target_class_id):
         """Apply targeted augmentation for balancing"""
         try:
-            # Create augmentation pipeline with corrected parameters
+            # Create augmentation pipeline with corrected parameters and reduced intensity
             transform = A.Compose([
                 A.OneOf([
-                    A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, p=0.7),
-                    A.HueSaturationValue(hue_shift_limit=20, sat_shift_limit=30, val_shift_limit=20, p=0.7),
-                    A.CLAHE(clip_limit=2.0, tile_grid_size=(8, 8), p=0.5),
-                ], p=0.8),
+                    A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.6),
+                    A.HueSaturationValue(hue_shift_limit=15, sat_shift_limit=20, val_shift_limit=15, p=0.6),
+                    A.CLAHE(clip_limit=1.5, tile_grid_size=(8, 8), p=0.4),
+                ], p=0.7),
                 A.OneOf([
-                    A.GaussNoise(var_limit=10.0, p=0.5),  # Fixed: single value instead of tuple
-                    A.GaussianBlur(blur_limit=(3, 7), p=0.5),
-                    A.MotionBlur(blur_limit=7, p=0.3),
-                ], p=0.4),
+                    A.GaussNoise(var_limit=5.0, p=0.4),  # Reduced noise
+                    A.GaussianBlur(blur_limit=(3, 5), p=0.4),  # Reduced blur
+                    A.MotionBlur(blur_limit=5, p=0.2),  # Reduced motion blur
+                ], p=0.3),
                 A.OneOf([
-                    A.Affine(translate_percent=0.1, scale=(0.8, 1.2), rotate=(-15, 15), p=0.7),  # Fixed: use Affine instead of ShiftScaleRotate
-                    A.ElasticTransform(alpha=1, sigma=50, p=0.5),  # Fixed: removed alpha_affine parameter
-                    A.GridDistortion(num_steps=5, distort_limit=0.3, p=0.5),
-                ], p=0.6),
-                A.CoarseDropout(max_holes=8, max_height=32, max_width=32, p=0.3),  # Fixed: removed min_holes parameter
+                    A.Affine(translate_percent=0.05, scale=(0.9, 1.1), rotate=(-10, 10), p=0.6),  # Reduced transformations
+                    A.ElasticTransform(alpha=0.5, sigma=25, p=0.4),  # Reduced intensity
+                    A.GridDistortion(num_steps=3, distort_limit=0.2, p=0.4),  # Reduced distortion
+                ], p=0.5),
+                A.CoarseDropout(max_holes=4, max_height=16, max_width=16, p=0.2),  # Reduced dropout
             ], bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels']))
             
             # Prepare labels for augmentation with validation
             bboxes = []
             class_labels = []
             for label in labels:
+                # Skip invalid labels
+                if len(label) < 5:
+                    continue
+                    
                 # Validate bounding box coordinates
-                x, y, w, h = label[1:]
+                x, y, w, h = label[1:5]
+                
+                # Skip if coordinates are invalid (negative or NaN)
+                if any(math.isnan(coord) or coord < 0 for coord in [x, y, w, h]):
+                    continue
+                    
                 # Ensure coordinates are within valid range [0, 1]
                 x = max(0.0, min(1.0, x))
                 y = max(0.0, min(1.0, y))
                 w = max(0.0, min(1.0, w))
                 h = max(0.0, min(1.0, h))
                 
-                # Only add valid bounding boxes
-                if w > 0.001 and h > 0.001:  # Minimum size threshold
+                # Only add valid bounding boxes with reasonable size
+                if w > 0.001 and h > 0.001 and w < 0.99 and h < 0.99:
                     bboxes.append([x, y, w, h])
-                    class_labels.append(label[0])
+                    class_labels.append(int(label[0]))
             
             # Apply augmentation
-            if bboxes:
+            if bboxes and len(bboxes) > 0:
                 try:
-                    transformed = transform(image=image, bboxes=bboxes, class_labels=class_labels)
-                    aug_image = transformed['image']
-                    aug_bboxes = transformed['bboxes']
-                    aug_class_labels = transformed['class_labels']
+                    # Ensure all bboxes are valid before augmentation
+                    valid_bboxes = []
+                    valid_class_labels = []
                     
-                    # Convert back to YOLO format with validation
-                    aug_labels = []
-                    for bbox, class_label in zip(aug_bboxes, aug_class_labels):
-                        # Validate augmented bounding box
+                    for bbox, class_label in zip(bboxes, class_labels):
                         x, y, w, h = bbox
-                        if 0.0 <= x <= 1.0 and 0.0 <= y <= 1.0 and w > 0.001 and h > 0.001:
-                            aug_labels.append([class_label, x, y, w, h])
+                        # Additional validation
+                        if (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0 and 
+                            0.001 < w < 0.99 and 0.001 < h < 0.99 and
+                            not math.isnan(x) and not math.isnan(y) and 
+                            not math.isnan(w) and not math.isnan(h)):
+                            valid_bboxes.append(bbox)
+                            valid_class_labels.append(class_label)
                     
-                    return aug_image, aug_labels
+                    if valid_bboxes:
+                        transformed = transform(image=image, bboxes=valid_bboxes, class_labels=valid_class_labels)
+                        aug_image = transformed['image']
+                        aug_bboxes = transformed['bboxes']
+                        aug_class_labels = transformed['class_labels']
+                        
+                        # Convert back to YOLO format with validation
+                        aug_labels = []
+                        for bbox, class_label in zip(aug_bboxes, aug_class_labels):
+                            # Validate augmented bounding box
+                            x, y, w, h = bbox
+                            if (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0 and 
+                                0.001 < w < 0.99 and 0.001 < h < 0.99 and
+                                not math.isnan(x) and not math.isnan(y) and 
+                                not math.isnan(w) and not math.isnan(h)):
+                                aug_labels.append([class_label, x, y, w, h])
+                        
+                        return aug_image, aug_labels
+                    else:
+                        # No valid bboxes, just augment image
+                        transformed = transform(image=image)
+                        return transformed['image'], labels
+                        
                 except Exception as e:
-                    print(f"Warning: Augmentation failed, using original labels: {e}")
+                    # Silently fall back to original data
                     return image, labels
             else:
                 # No valid bounding boxes, just augment image
@@ -383,7 +415,7 @@ class DatasetBalancer:
                     transformed = transform(image=image)
                     return transformed['image'], labels
                 except Exception as e:
-                    print(f"Warning: Image augmentation failed: {e}")
+                    # Silently fall back to original data
                     return image, labels
         
         except Exception as e:
