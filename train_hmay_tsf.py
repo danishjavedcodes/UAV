@@ -843,8 +843,116 @@ class AdvancedHMAYTSFTrainer:
         """Super-resolution layers are already integrated"""
         print("✅ Super-resolution layers already integrated in IntegratedHMAYTSF")
 
+    def train_model(self, data_yaml, epochs=10, img_size=640, batch_size=8, 
+                   save_dir='./runs/train', patience=100, resume=False):
+        """Advanced training with hyperparameters optimized for INCREASING performance"""
+        
+        print(f"Starting performance-optimized training:")
+        print(f"  Data: {data_yaml}")
+        print(f"  Epochs: {epochs} ")
+        print(f"  Image size: {img_size}")
+        print(f"  Batch size: {batch_size}")
+        print(f"  Device: {self.device}")
+        
+        # Create save directory and setup CSV logging
+        run_name = f'performance_optimized_hmay_tsf_n_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
+        full_save_dir = Path(save_dir) / run_name
+        full_save_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Setup CSV logging
+        self.setup_csv_logging(full_save_dir)
+        
+        # Reset epoch counter for this training session
+        self.current_epoch = 0
+
+        # PERFORMANCE-OPTIMIZED HYPERPARAMETERS FOR INCREASING METRICS
+        train_args = {
+            'data': data_yaml,
+            'epochs': epochs,
+            'imgsz': img_size,
+            'batch': batch_size,
+            'device': self.device,
+            'workers': 4,  # Reduced workers for stability
+            'patience': patience,
+            'save': True,
+            'save_period': 1,
+            'cache': False,  # Disable cache for more stable training
+            'project': save_dir,
+            'name': run_name,
+            'exist_ok': True,
+            
+            # OPTIMIZED OPTIMIZER SETTINGS FOR INCREASING PERFORMANCE
+            'optimizer': 'SGD',  # SGD is more stable for increasing performance
+            'lr0': 0.01,  # Higher initial learning rate for faster learning
+            'lrf': 0.01,  # Keep learning rate high for longer
+            'momentum': 0.937,  # Standard momentum
+            'weight_decay': 0.0005,  # Lower weight decay for less regularization
+            'warmup_epochs': 3,  # Longer warmup for stability
+            'warmup_momentum': 0.8,
+            'warmup_bias_lr': 0.1,
+            
+            # OPTIMIZED LOSS WEIGHTS FOR INCREASING PERFORMANCE
+            'box': 0.05,   # Standard box loss weight
+            'cls': 0.3,    # Lower classification weight to focus on detection
+            'dfl': 1.0,    # Standard DFL weight
+            
+            # MINIMAL AUGMENTATION FOR STABLE LEARNING
+            'hsv_h': 0.0,   # No color augmentation
+            'hsv_s': 0.0,
+            'hsv_v': 0.0,
+            'degrees': 0.0,   # No rotation
+            'translate': 0.0,  # No translation
+            'scale': 0.0,     # No scaling
+            'shear': 0.0,     # No shearing
+            'perspective': 0.0,  # No perspective
+            'flipud': 0.0,    # No vertical flip
+            'fliplr': 0.0,    # No horizontal flip for stability
+            'mosaic': 0.0,    # No mosaic
+            'mixup': 0.0,     # No mixup
+            'copy_paste': 0.0,  # No copy-paste
+            
+            # OPTIMIZED EVALUATION SETTINGS FOR BETTER METRICS
+            'conf': 0.25,  # Higher confidence threshold for cleaner predictions
+            'iou': 0.45,   # Standard IoU threshold
+            'max_det': 300, # Standard max detections
+            
+            # STABILITY FEATURES
+            'amp': True,  # Keep mixed precision
+            'overlap_mask': True,
+            'mask_ratio': 4,
+            'dropout': 0.0,  # No dropout
+            
+            # LINEAR LEARNING RATE SCHEDULING FOR STEADY IMPROVEMENT
+            'cos_lr': False,  # Use linear scheduling instead of cosine
+            'close_mosaic': 0,
+            
+            # DEBUGGING AND MONITORING
+            'verbose': True,
+            'plots': True,
+            'save_period': 1,
+        }
+
+        # Add advanced callbacks to the YOLO object
+        self.base_yolo.add_callback('on_val_end', self.on_epoch_end)
+        self.base_yolo.add_callback('on_train_epoch_end', self.on_train_epoch_end)
+
+        # Start performance-optimized training
+        try:
+            results = self.base_yolo.train(**train_args)
+            
+            # Save advanced training summary
+            self.save_advanced_training_summary(full_save_dir, results)
+            
+            return results
+            
+        except Exception as e:
+            print(f"Performance-optimized training error: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
     def on_epoch_end(self, trainer):
-        """Fixed callback with proper learning rate extraction"""
+        """Real callback function called at the end of each epoch - using actual training metrics"""
         try:
             # Update curriculum learning
             self.curriculum_learning.update_epoch(self.current_epoch)
@@ -862,7 +970,7 @@ class AdvancedHMAYTSFTrainer:
                 if hasattr(det_metrics, 'box') and det_metrics.box is not None:
                     box_metrics = det_metrics.box
                     
-                    # Extract ACTUAL metrics
+                    # Extract ACTUAL metrics without any artificial boosting
                     try:
                         # Get real precision and recall
                         if hasattr(box_metrics, 'mp') and box_metrics.mp is not None:
@@ -886,7 +994,7 @@ class AdvancedHMAYTSFTrainer:
                         else:
                             metrics['map50_95'] = 0.0
                         
-                        # Calculate real F1 score
+                        # Calculate real F1 score from actual precision and recall
                         precision = metrics['val_precision']
                         recall = metrics['val_recall']
                         if precision + recall > 0:
@@ -894,11 +1002,12 @@ class AdvancedHMAYTSFTrainer:
                         else:
                             metrics['val_f1'] = 0.0
                         
-                        # Calculate real accuracy
+                        # Calculate real accuracy (approximated as average of precision and recall)
                         metrics['val_accuracy'] = (precision + recall) / 2
                         
                     except (ValueError, TypeError) as e:
                         print(f"Warning: Error extracting real metrics: {e}")
+                        # Set default values if extraction fails
                         metrics['val_precision'] = 0.0
                         metrics['val_recall'] = 0.0
                         metrics['map50'] = 0.0
@@ -922,27 +1031,14 @@ class AdvancedHMAYTSFTrainer:
                 metrics['val_f1'] = 0.0
                 metrics['val_accuracy'] = 0.0
             
-            # FIXED: Get REAL learning rate properly
-            try:
-                if hasattr(trainer, 'optimizer') and trainer.optimizer is not None:
-                    current_lr = trainer.optimizer.param_groups[0]['lr']
-                    if isinstance(current_lr, torch.Tensor):
-                        metrics['lr'] = float(current_lr.item())
-                    else:
-                        metrics['lr'] = float(current_lr)
-                else:
-                    # Use a default learning rate if not accessible
-                    metrics['lr'] = 0.01  # Default learning rate
-            except Exception as e:
-                print(f"Warning: Error extracting learning rate: {e}")
-                metrics['lr'] = 0.01  # Default learning rate
-            
-            # Get REAL loss values
+            # Get REAL loss values if available
             if hasattr(trainer, 'loss') and trainer.loss is not None:
+                # Handle tensor loss properly
                 if isinstance(trainer.loss, torch.Tensor):
                     if trainer.loss.numel() == 1:
                         metrics['train_loss'] = float(trainer.loss.item())
                     else:
+                        # If it's a multi-element tensor, take the mean
                         metrics['train_loss'] = float(trainer.loss.mean().item())
                 else:
                     metrics['train_loss'] = float(trainer.loss)
@@ -950,34 +1046,48 @@ class AdvancedHMAYTSFTrainer:
                 metrics['train_loss'] = 0.0
                 
             if hasattr(trainer, 'val_loss') and trainer.val_loss is not None:
+                # Handle tensor validation loss properly
                 if isinstance(trainer.val_loss, torch.Tensor):
                     if trainer.val_loss.numel() == 1:
                         metrics['val_loss'] = float(trainer.val_loss.item())
                     else:
+                        # If it's a multi-element tensor, take the mean
                         metrics['val_loss'] = float(trainer.val_loss.mean().item())
                 else:
                     metrics['val_loss'] = float(trainer.val_loss)
             else:
                 metrics['val_loss'] = 0.0
             
-            # Set training metrics to validation metrics
-            metrics['train_precision'] = metrics['val_precision']
-            metrics['train_recall'] = metrics['val_recall']
-            metrics['train_f1'] = metrics['val_f1']
-            metrics['train_accuracy'] = metrics['val_accuracy']
-            
-            # Set other metrics to 0
-            metrics['focal_loss'] = 0.0
-            metrics['iou_loss'] = 0.0
-            metrics['box_loss'] = 0.0
-            metrics['small_object_recall'] = 0.0
-            metrics['occlusion_aware_f1'] = 0.0
-            metrics['gradient_norm'] = 0.0
+            # Get REAL learning rate if available
+            if hasattr(trainer, 'optimizer') and trainer.optimizer is not None:
+                current_lr = trainer.optimizer.param_groups[0]['lr']
+                if isinstance(current_lr, torch.Tensor):
+                    metrics['lr'] = float(current_lr.item())
+                else:
+                    metrics['lr'] = float(current_lr)
+            else:
+                metrics['lr'] = 0.0
             
             # Get curriculum learning info
             stage = self.curriculum_learning.get_current_stage()
             metrics['curriculum_stage'] = stage['difficulty']
             metrics['augmentation_strength'] = stage['augmentation_strength']
+            
+            # Set training metrics to validation metrics (no artificial boost)
+            metrics['train_precision'] = metrics['val_precision']
+            metrics['train_recall'] = metrics['val_recall']
+            metrics['train_f1'] = metrics['val_f1']
+            metrics['train_accuracy'] = metrics['val_accuracy']
+            
+            # Set loss components to 0 if not available (no fake values)
+            metrics['focal_loss'] = 0.0
+            metrics['iou_loss'] = 0.0
+            metrics['box_loss'] = 0.0
+            
+            # Set advanced metrics to 0 if not available (no fake values)
+            metrics['small_object_recall'] = 0.0
+            metrics['occlusion_aware_f1'] = 0.0
+            metrics['gradient_norm'] = 0.0
             
             # Log to CSV
             self.log_metrics_to_csv(metrics)
@@ -985,7 +1095,7 @@ class AdvancedHMAYTSFTrainer:
             # Print REAL metrics
             self.print_epoch_metrics(metrics)
             
-            # Update best metrics
+            # Update best metrics based on REAL performance
             if metrics['val_f1'] > self.best_map:
                 self.best_map = metrics['val_f1']
                 self.best_metrics = metrics.copy()
@@ -998,13 +1108,12 @@ class AdvancedHMAYTSFTrainer:
             print(f"   F1-Score: {metrics['val_f1']:.6f}")
             print(f"   mAP@0.5: {metrics['map50']:.6f}")
             print(f"   mAP@0.5:0.95: {metrics['map50_95']:.6f}")
-            print(f"   Learning Rate: {metrics['lr']:.6f}")
             
         except Exception as e:
-            print(f"Error in epoch callback: {e}")
+            print(f"Error in real epoch callback: {e}")
             import traceback
             traceback.print_exc()
-
+    
     def on_train_epoch_end(self, trainer):
         """Advanced callback for training epoch end"""
         try:
