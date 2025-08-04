@@ -570,12 +570,14 @@ def main():
         def _create_spp_csp(self, channels):
             """Create SPP-CSP module"""
             return nn.Sequential(
-                # Multi-scale pooling
-                nn.MaxPool2d(kernel_size=5, stride=1, padding=2),
-                nn.MaxPool2d(kernel_size=9, stride=1, padding=4),
-                nn.MaxPool2d(kernel_size=13, stride=1, padding=6),
+                # Multi-scale pooling with concatenation
+                nn.ModuleList([
+                    nn.MaxPool2d(kernel_size=5, stride=1, padding=2),
+                    nn.MaxPool2d(kernel_size=9, stride=1, padding=4),
+                    nn.MaxPool2d(kernel_size=13, stride=1, padding=6),
+                ]),
                 # Cross-stage partial connection
-                nn.Conv2d(channels * 4, channels, 1),
+                nn.Conv2d(channels * 4, channels, 1),  # 4 = original + 3 pooled
                 nn.BatchNorm2d(channels),
                 nn.ReLU(inplace=True)
             )
@@ -734,7 +736,24 @@ def main():
                 current_x = current_x * attention
                 
                 # Apply SPP-CSP
-                current_x = spp_layer(current_x)
+                # Get the pooling layers and conv layer from spp_layer
+                pooling_layers = spp_layer[0]  # ModuleList of pooling layers
+                conv_layer = spp_layer[1]      # Conv2d layer
+                bn_layer = spp_layer[2]        # BatchNorm2d layer
+                relu_layer = spp_layer[3]      # ReLU layer
+                
+                # Apply multi-scale pooling and concatenate
+                pooled_features = [current_x]  # Original features
+                for pool_layer in pooling_layers:
+                    pooled_features.append(pool_layer(current_x))
+                
+                # Concatenate all features
+                spp_output = torch.cat(pooled_features, dim=1)
+                
+                # Apply convolution, batch norm, and ReLU
+                current_x = conv_layer(spp_output)
+                current_x = bn_layer(current_x)
+                current_x = relu_layer(current_x)
                 
                 features.append(current_x)
             
