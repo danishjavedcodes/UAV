@@ -744,9 +744,12 @@ class AdvancedHMAYTSFTrainer:
         self.training_metrics.append(metrics_dict)
     
     def setup_advanced_model(self, num_classes=4, pretrained=True):
-        """Setup the integrated HMAY-TSF model with YOLOv11 for 98%+ performance"""
-        print("Setting up Optimized HMAY-TSF model for 98%+ performance...")
+        """Setup the REAL HMAY-TSF model from hmay_tsf_model.py"""
+        print("Setting up REAL HMAY-TSF model from hmay_tsf_model.py...")
         print(f"Dataset: 4 classes (bus, car, truck, van)")
+        
+        # Import the REAL HMAY-TSF model
+        from hmay_tsf_model import HMAY_TSF
         
         # Use YOLOv11 instead of YOLOv8
         model_name = f'yolov11n.pt'
@@ -761,15 +764,15 @@ class AdvancedHMAYTSFTrainer:
             model_name = f'yolov8n.pt' if pretrained else f'yolov8n.yaml'
             self.base_yolo = YOLO(model_name)
         
-        # Create integrated model
-        self.model = IntegratedHMAYTSF(self.base_yolo.model, num_classes)
+        # Create the REAL HMAY-TSF model
+        self.model = HMAY_TSF(
+            model_size='n', 
+            num_classes=num_classes, 
+            pretrained=pretrained, 
+            use_yolov11=True
+        )
         
-        # Setup optimized fine-tuning for 98%+ performance
-        if pretrained:
-            print("🔒 Implementing optimized fine-tuning strategy for 98%+ performance...")
-            self._setup_optimized_fine_tuning()
-        
-        print(f"Optimized HMAY-TSF model loaded successfully!")
+        print(f"✅ REAL HMAY-TSF model loaded successfully!")
         print(f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
         print(f"Trainable parameters: {sum(p.numel() for p in self.model.parameters() if p.requires_grad):,}")
         return self.model
@@ -881,20 +884,20 @@ class AdvancedHMAYTSFTrainer:
             'name': run_name,
             'exist_ok': True,
             
-            # OPTIMIZED OPTIMIZER SETTINGS FOR INCREASING PERFORMANCE
-            'optimizer': 'SGD',  # SGD is more stable for increasing performance
-            'lr0': 0.01,  # Higher initial learning rate for faster learning
-            'lrf': 0.01,  # Keep learning rate high for longer
-            'momentum': 0.937,  # Standard momentum
-            'weight_decay': 0.0005,  # Lower weight decay for less regularization
-            'warmup_epochs': 3,  # Longer warmup for stability
+            # AGGRESSIVE OPTIMIZER SETTINGS FOR BETTER LEARNING
+            'optimizer': 'AdamW',  # Back to AdamW for better convergence
+            'lr0': 0.001,  # Lower initial learning rate for stability
+            'lrf': 0.1,    # Higher final learning rate
+            'momentum': 0.95,  # Higher momentum
+            'weight_decay': 0.001,  # Standard weight decay
+            'warmup_epochs': 1,  # Shorter warmup
             'warmup_momentum': 0.8,
             'warmup_bias_lr': 0.1,
             
-            # OPTIMIZED LOSS WEIGHTS FOR INCREASING PERFORMANCE
+            # OPTIMIZED LOSS WEIGHTS FOR BETTER DETECTION
             'box': 0.05,   # Standard box loss weight
-            'cls': 0.3,    # Lower classification weight to focus on detection
-            'dfl': 1.0,    # Standard DFL weight
+            'cls': 0.5,    # Standard classification weight
+            'dfl': 1.5,    # Standard DFL weight
             
             # MINIMAL AUGMENTATION FOR STABLE LEARNING
             'hsv_h': 0.0,   # No color augmentation
@@ -911,9 +914,9 @@ class AdvancedHMAYTSFTrainer:
             'mixup': 0.0,     # No mixup
             'copy_paste': 0.0,  # No copy-paste
             
-            # OPTIMIZED EVALUATION SETTINGS FOR BETTER METRICS
-            'conf': 0.25,  # Higher confidence threshold for cleaner predictions
-            'iou': 0.45,   # Standard IoU threshold
+            # BETTER EVALUATION SETTINGS FOR IMPROVED METRICS
+            'conf': 0.001,  # Lower confidence threshold for better recall
+            'iou': 0.6,     # Higher IoU threshold for better precision
             'max_det': 300, # Standard max detections
             
             # STABILITY FEATURES
@@ -922,8 +925,8 @@ class AdvancedHMAYTSFTrainer:
             'mask_ratio': 4,
             'dropout': 0.0,  # No dropout
             
-            # LINEAR LEARNING RATE SCHEDULING FOR STEADY IMPROVEMENT
-            'cos_lr': False,  # Use linear scheduling instead of cosine
+            # COSINE LEARNING RATE SCHEDULING FOR BETTER CONVERGENCE
+            'cos_lr': True,  # Use cosine scheduling
             'close_mosaic': 0,
             
             # DEBUGGING AND MONITORING
@@ -962,6 +965,16 @@ class AdvancedHMAYTSFTrainer:
             # Initialize metrics dictionary
             metrics = {}
             metrics['epoch'] = epoch
+            
+            # Get REAL learning rate FIRST (this was the issue)
+            if hasattr(trainer, 'optimizer') and trainer.optimizer is not None:
+                current_lr = trainer.optimizer.param_groups[0]['lr']
+                if isinstance(current_lr, torch.Tensor):
+                    metrics['lr'] = float(current_lr.item())
+                else:
+                    metrics['lr'] = float(current_lr)
+            else:
+                metrics['lr'] = 0.01  # Default learning rate
             
             # Get REAL metrics from actual training
             if hasattr(trainer, 'metrics') and trainer.metrics is not None:
@@ -1057,16 +1070,6 @@ class AdvancedHMAYTSFTrainer:
                     metrics['val_loss'] = float(trainer.val_loss)
             else:
                 metrics['val_loss'] = 0.0
-            
-            # Get REAL learning rate if available
-            if hasattr(trainer, 'optimizer') and trainer.optimizer is not None:
-                current_lr = trainer.optimizer.param_groups[0]['lr']
-                if isinstance(current_lr, torch.Tensor):
-                    metrics['lr'] = float(current_lr.item())
-                else:
-                    metrics['lr'] = float(current_lr)
-            else:
-                metrics['lr'] = 0.0
             
             # Get curriculum learning info
             stage = self.curriculum_learning.get_current_stage()
@@ -1199,6 +1202,28 @@ class AdvancedHMAYTSFTrainer:
         
         return results
 
+    def reset_model_for_better_performance(self):
+        """Reset model with better initialization for improved performance"""
+        print("🔄 Resetting model for better performance...")
+        
+        # Reinitialize the model with better weights
+        self.model = IntegratedHMAYTSF(self.base_yolo.model, num_classes=4)
+        
+        # Initialize weights with better strategy
+        for m in self.model.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                nn.init.constant_(m.bias, 0)
+        
+        print("✅ Model reset with better initialization!")
+
 
 class DatasetDownloader:
     """Advanced dataset downloader for Roboflow aerial vehicles dataset"""
@@ -1289,17 +1314,93 @@ class_distribution:
         print(f"✅ Dataset YAML created: {yaml_path}")
         return yaml_path
 
+class HyperparameterOptimizer:
+    """Hyperparameter optimization using Optuna"""
+    
+    def __init__(self, trainer, data_yaml, n_trials=50):
+        self.trainer = trainer
+        self.data_yaml = data_yaml
+        self.n_trials = n_trials
+        self.best_params = None
+        self.best_score = 0.0
+        
+    def objective(self, trial):
+        """Objective function for hyperparameter optimization"""
+        
+        # Define hyperparameter search space
+        params = {
+            'lr0': trial.suggest_float('lr0', 1e-5, 1e-2, log=True),
+            'lrf': trial.suggest_float('lrf', 0.01, 0.5),
+            'momentum': trial.suggest_float('momentum', 0.8, 0.99),
+            'weight_decay': trial.suggest_float('weight_decay', 1e-5, 1e-2, log=True),
+            'warmup_epochs': trial.suggest_int('warmup_epochs', 1, 5),
+            'box': trial.suggest_float('box', 0.01, 0.1),
+            'cls': trial.suggest_float('cls', 0.1, 1.0),
+            'dfl': trial.suggest_float('dfl', 0.5, 2.0),
+            'conf': trial.suggest_float('conf', 0.001, 0.5),
+            'iou': trial.suggest_float('iou', 0.3, 0.7),
+            'batch_size': trial.suggest_categorical('batch_size', [8, 16, 32]),
+            'optimizer': trial.suggest_categorical('optimizer', ['SGD', 'AdamW', 'Adam']),
+        }
+        
+        try:
+            # Train with these parameters
+            results = self.trainer.train_model_with_params(
+                self.data_yaml, 
+                epochs=10,  # Short training for optimization
+                **params
+            )
+            
+            # Extract the best metric (F1 score or mAP)
+            if hasattr(results, 'box') and results.box is not None:
+                score = float(results.box.map50)  # Use mAP@0.5 as score
+            else:
+                score = 0.0
+            
+            # Update best parameters
+            if score > self.best_score:
+                self.best_score = score
+                self.best_params = params.copy()
+            
+            return score
+            
+        except Exception as e:
+            print(f"Trial failed: {e}")
+            return 0.0
+    
+    def optimize(self):
+        """Run hyperparameter optimization"""
+        try:
+            import optuna
+        except ImportError:
+            print("❌ Optuna not available. Install with: pip install optuna")
+            return None
+        
+        print(f"🔍 Starting hyperparameter optimization with {self.n_trials} trials...")
+        
+        study = optuna.create_study(direction='maximize')
+        study.optimize(self.objective, n_trials=self.n_trials)
+        
+        print(f"✅ Optimization completed!")
+        print(f"Best score: {study.best_value:.6f}")
+        print(f"Best parameters: {study.best_params}")
+        
+        return study.best_params
 
 def main():
-    """Main function with ultra-aggressive parameters for 98%+ performance"""
-    parser = argparse.ArgumentParser(description='ULTRA-AGGRESSIVE HMAY-TSF Training for 98%+ Performance')
+    """Main function with hyperparameter optimization"""
+    parser = argparse.ArgumentParser(description='HMAY-TSF Training with Hyperparameter Optimization')
     parser.add_argument('--data', type=str, default='./Aerial-Vehicles-1/data.yaml', 
                        help='Path to dataset YAML file')
-    parser.add_argument('--epochs', type=int, default=100, help='Number of epochs (increased for 98%+)')
+    parser.add_argument('--epochs', type=int, default=50, help='Number of epochs')
     parser.add_argument('--img-size', type=int, default=640, help='Image size')
-    parser.add_argument('--batch-size', type=int, default=32, help='Batch size (increased for 98%+)')
+    parser.add_argument('--batch-size', type=int, default=16, help='Batch size')
     parser.add_argument('--save-dir', type=str, default='./runs/train', help='Save directory')
-    parser.add_argument('--patience', type=int, default=50, help='Patience for early stopping (increased)')
+    parser.add_argument('--patience', type=int, default=20, help='Patience for early stopping')
+    parser.add_argument('--optimize', action='store_true', 
+                       help='Run hyperparameter optimization')
+    parser.add_argument('--n-trials', type=int, default=20, 
+                       help='Number of optimization trials')
     parser.add_argument('--download-dataset', action='store_true', 
                        help='Download dataset from Roboflow')
     parser.add_argument('--api-key', type=str, default="q2GjuCzvnvJUnJ3GNWWt",
@@ -1319,23 +1420,51 @@ def main():
             print("❌ Failed to download dataset")
             return
     
-    # Initialize trainer with ultra-aggressive model
+    # Initialize trainer
     trainer = AdvancedHMAYTSFTrainer(model_size='n', device='auto')
     
-    # Setup ultra-aggressive model with 4 classes
+    # Setup REAL HMAY-TSF model with 4 classes
     trainer.setup_advanced_model(num_classes=4, pretrained=True)
     
-    # Start ultra-aggressive training for 98%+ performance
-    results = trainer.train_model(
-        data_yaml=args.data,
-        epochs=args.epochs,
-        img_size=args.img_size,
-        batch_size=args.batch_size,
-        save_dir=args.save_dir,
-        patience=args.patience
-    )
+    # Run hyperparameter optimization if requested
+    if args.optimize:
+        print("🔍 Running hyperparameter optimization...")
+        optimizer = HyperparameterOptimizer(trainer, args.data, n_trials=args.n_trials)
+        best_params = optimizer.optimize()
+        
+        if best_params:
+            print("🚀 Training with best parameters...")
+            # Train with best parameters
+            results = trainer.train_model_with_params(
+                data_yaml=args.data,
+                epochs=args.epochs,
+                img_size=args.img_size,
+                save_dir=args.save_dir,
+                patience=args.patience,
+                **best_params
+            )
+        else:
+            print("❌ Optimization failed, using default parameters")
+            results = trainer.train_model(
+                data_yaml=args.data,
+                epochs=args.epochs,
+                img_size=args.img_size,
+                batch_size=args.batch_size,
+                save_dir=args.save_dir,
+                patience=args.patience
+            )
+    else:
+        # Train with default parameters
+        results = trainer.train_model(
+            data_yaml=args.data,
+            epochs=args.epochs,
+            img_size=args.img_size,
+            batch_size=args.batch_size,
+            save_dir=args.save_dir,
+            patience=args.patience
+        )
     
-    print("✅ ULTRA-AGGRESSIVE HMAY-TSF training completed for 98%+ performance!")
+    print("✅ HMAY-TSF training completed!")
     print(f"Results saved to: {args.save_dir}")
 
 if __name__ == "__main__":
