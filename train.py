@@ -212,6 +212,47 @@ class SimpleHMAYTSF(nn.Module):
         
         return output
 
+def calculate_metrics(predictions, targets, num_classes=4):
+    """Calculate accuracy, precision, recall, and F1 score"""
+    all_preds = []
+    all_targets = []
+    
+    for pred, target in zip(predictions, targets):
+        # Convert predictions to class predictions (simplified)
+        # For object detection, we'll use the class with highest confidence
+        if pred.size(0) > 0:
+            # Get class predictions (assuming last num_classes dimensions are class scores)
+            class_scores = pred[:, -num_classes:]  # [num_objects, num_classes]
+            pred_classes = torch.argmax(class_scores, dim=1)  # [num_objects]
+            all_preds.extend(pred_classes.cpu().numpy())
+        
+        # Convert targets to class labels
+        if target.size(0) > 0:
+            target_classes = target[:, 0].long()  # First column is class_id
+            all_targets.extend(target_classes.cpu().numpy())
+    
+    # Convert to numpy arrays
+    all_preds = np.array(all_preds)
+    all_targets = np.array(all_targets)
+    
+    # Handle empty predictions/targets
+    if len(all_preds) == 0 and len(all_targets) == 0:
+        return 1.0, 1.0, 1.0, 1.0  # Perfect score if no objects
+    elif len(all_preds) == 0 or len(all_targets) == 0:
+        return 0.0, 0.0, 0.0, 0.0  # Zero score if mismatch
+    
+    # Calculate metrics
+    try:
+        accuracy = accuracy_score(all_targets, all_preds)
+        precision = precision_score(all_targets, all_preds, average='weighted', zero_division=0)
+        recall = recall_score(all_targets, all_preds, average='weighted', zero_division=0)
+        f1 = f1_score(all_targets, all_preds, average='weighted', zero_division=0)
+    except:
+        # Fallback if metrics calculation fails
+        accuracy = precision = recall = f1 = 0.0
+    
+    return accuracy, precision, recall, f1
+
 class SimpleTrainer:
     """Simple trainer for robust training"""
     
@@ -232,6 +273,14 @@ class SimpleTrainer:
         # Metrics tracking
         self.train_losses = []
         self.val_losses = []
+        self.train_accuracies = []
+        self.val_accuracies = []
+        self.train_precisions = []
+        self.val_precisions = []
+        self.train_recalls = []
+        self.val_recalls = []
+        self.train_f1s = []
+        self.val_f1s = []
         self.best_val_loss = float('inf')
         
     def train_epoch(self, train_loader):
@@ -239,6 +288,8 @@ class SimpleTrainer:
         self.model.train()
         total_loss = 0
         num_batches = 0
+        all_predictions = []
+        all_targets = []
         
         progress_bar = tqdm(train_loader, desc="Training")
         
@@ -248,6 +299,10 @@ class SimpleTrainer:
             # Forward pass
             predictions = self.model(images)
             loss, box_loss, cls_loss, obj_loss = self.criterion(predictions, targets)
+            
+            # Store predictions and targets for metrics
+            all_predictions.extend([pred.cpu() for pred in predictions])
+            all_targets.extend(targets)
             
             # Backward pass
             self.optimizer.zero_grad()
@@ -268,13 +323,22 @@ class SimpleTrainer:
         avg_loss = total_loss / num_batches if num_batches > 0 else 0
         self.train_losses.append(avg_loss)
         
-        return avg_loss
+        # Calculate metrics
+        accuracy, precision, recall, f1 = calculate_metrics(all_predictions, all_targets)
+        self.train_accuracies.append(accuracy)
+        self.train_precisions.append(precision)
+        self.train_recalls.append(recall)
+        self.train_f1s.append(f1)
+        
+        return avg_loss, accuracy, precision, recall, f1
     
     def validate_epoch(self, val_loader):
         """Validate for one epoch"""
         self.model.eval()
         total_loss = 0
         num_batches = 0
+        all_predictions = []
+        all_targets = []
         
         with torch.no_grad():
             progress_bar = tqdm(val_loader, desc="Validation")
@@ -285,6 +349,10 @@ class SimpleTrainer:
                 # Forward pass
                 predictions = self.model(images)
                 loss, box_loss, cls_loss, obj_loss = self.criterion(predictions, targets)
+                
+                # Store predictions and targets for metrics
+                all_predictions.extend([pred.cpu() for pred in predictions])
+                all_targets.extend(targets)
                 
                 total_loss += loss.item()
                 num_batches += 1
@@ -300,7 +368,14 @@ class SimpleTrainer:
         avg_loss = total_loss / num_batches if num_batches > 0 else 0
         self.val_losses.append(avg_loss)
         
-        return avg_loss
+        # Calculate metrics
+        accuracy, precision, recall, f1 = calculate_metrics(all_predictions, all_targets)
+        self.val_accuracies.append(accuracy)
+        self.val_precisions.append(precision)
+        self.val_recalls.append(recall)
+        self.val_f1s.append(f1)
+        
+        return avg_loss, accuracy, precision, recall, f1
     
     def train(self, train_loader, val_loader, epochs=20, save_dir='./runs/simple_train'):
         """Main training loop"""
@@ -318,18 +393,21 @@ class SimpleTrainer:
             print("="*50)
             
             # Training
-            train_loss = self.train_epoch(train_loader)
+            train_loss, train_acc, train_prec, train_rec, train_f1 = self.train_epoch(train_loader)
             
             # Validation
-            val_loss = self.validate_epoch(val_loader)
+            val_loss, val_acc, val_prec, val_rec, val_f1 = self.validate_epoch(val_loader)
             
             # Learning rate scheduling
             self.scheduler.step()
             current_lr = self.optimizer.param_groups[0]['lr']
             
             # Print metrics
-            print(f"Train Loss: {train_loss:.4f}")
-            print(f"Val Loss: {val_loss:.4f}")
+            print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+            print(f"Train Acc: {train_acc:.4f} | Val Acc: {val_acc:.4f}")
+            print(f"Train Prec: {train_prec:.4f} | Val Prec: {val_prec:.4f}")
+            print(f"Train Rec: {train_rec:.4f} | Val Rec: {val_rec:.4f}")
+            print(f"Train F1: {train_f1:.4f} | Val F1: {val_f1:.4f}")
             print(f"Learning Rate: {current_lr:.6f}")
             
             # Save best model
@@ -342,6 +420,14 @@ class SimpleTrainer:
                     'scheduler_state_dict': self.scheduler.state_dict(),
                     'train_loss': train_loss,
                     'val_loss': val_loss,
+                    'train_acc': train_acc,
+                    'val_acc': val_acc,
+                    'train_prec': train_prec,
+                    'val_prec': val_prec,
+                    'train_rec': train_rec,
+                    'val_rec': val_rec,
+                    'train_f1': train_f1,
+                    'val_f1': val_f1,
                     'best_val_loss': self.best_val_loss,
                 }, best_model_path)
                 print(f"✅ New best model saved! Val Loss: {val_loss:.4f}")
@@ -356,6 +442,14 @@ class SimpleTrainer:
                     'scheduler_state_dict': self.scheduler.state_dict(),
                     'train_loss': train_loss,
                     'val_loss': val_loss,
+                    'train_acc': train_acc,
+                    'val_acc': val_acc,
+                    'train_prec': train_prec,
+                    'val_prec': val_prec,
+                    'train_rec': train_rec,
+                    'val_rec': val_rec,
+                    'train_f1': train_f1,
+                    'val_f1': val_f1,
                     'best_val_loss': self.best_val_loss,
                 }, checkpoint_path)
                 print(f"💾 Checkpoint saved: {checkpoint_path}")
@@ -369,6 +463,14 @@ class SimpleTrainer:
             'scheduler_state_dict': self.scheduler.state_dict(),
             'train_loss': train_loss,
             'val_loss': val_loss,
+            'train_acc': train_acc,
+            'val_acc': val_acc,
+            'train_prec': train_prec,
+            'val_prec': val_prec,
+            'train_rec': train_rec,
+            'val_rec': val_rec,
+            'train_f1': train_f1,
+            'val_f1': val_f1,
             'best_val_loss': self.best_val_loss,
         }, final_model_path)
         
