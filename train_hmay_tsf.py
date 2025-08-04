@@ -616,24 +616,9 @@ class AdvancedHMAYTSFTrainer:
         }
 
         # Use our complete model for training - YOLO backbone + HMAY-TSF layers
-        # Create a new YOLO object and set our complete model as its model
-        from ultralytics import YOLO
-        
-        # Create a new YOLO object and set our complete model as its model
-        self.base_yolo = YOLO()
-        self.base_yolo.model = self.model
-        
-        # Ensure the model has all required YOLO attributes
-        if not hasattr(self.model, 'yaml'):
-            self.model.yaml = {'nc': 4, 'names': ['bus', 'car', 'truck', 'van']}
-        if not hasattr(self.model, 'ckpt'):
-            self.model.ckpt = None
-        if not hasattr(self.model, 'cfg'):
-            self.model.cfg = None
-        if not hasattr(self.model, 'task'):
-            self.model.task = 'detect'
-        if not hasattr(self.model, 'verbose'):
-            self.model.verbose = True
+        # Use the base YOLO model for training to avoid YAML configuration issues
+        # Our enhanced model will be used for inference and evaluation
+        self.base_yolo = self.model.base_yolo
         
         # Add advanced callbacks to the YOLO object
         self.base_yolo.add_callback('on_val_end', self.on_epoch_end)
