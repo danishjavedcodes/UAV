@@ -153,17 +153,24 @@ class EnhancedBiFPN_Layer(nn.Module):
         # Multiple BiFPN layers for better feature fusion
         self.bifpn_layers = nn.ModuleList()
         for _ in range(num_layers):
-            layer = nn.ModuleDict({
-                'conv1': Conv(channels, channels, 3, 1),
-                'conv2': Conv(channels, channels, 3, 1),
-                'conv3': Conv(channels, channels, 3, 1),
-                'conv4': Conv(channels, channels, 3, 1),
-                'weight1': nn.Parameter(torch.ones(2)),
-                'weight2': nn.Parameter(torch.ones(3)),
-                'weight3': nn.Parameter(torch.ones(2)),
-                'weight4': nn.Parameter(torch.ones(2)),
-                'attention': nn.MultiheadAttention(channels, 8, batch_first=True)
-            })
+            # Create a proper module for each layer
+            layer = nn.Module()
+            
+            # Add conv layers as attributes
+            layer.conv1 = Conv(channels, channels, 3, 1)
+            layer.conv2 = Conv(channels, channels, 3, 1)
+            layer.conv3 = Conv(channels, channels, 3, 1)
+            layer.conv4 = Conv(channels, channels, 3, 1)
+            
+            # Add attention layer
+            layer.attention = nn.MultiheadAttention(channels, 8, batch_first=True)
+            
+            # Add weight parameters as regular attributes (not in ModuleDict)
+            layer.weight1 = nn.Parameter(torch.ones(2))
+            layer.weight2 = nn.Parameter(torch.ones(3))
+            layer.weight3 = nn.Parameter(torch.ones(2))
+            layer.weight4 = nn.Parameter(torch.ones(2))
+            
             self.bifpn_layers.append(layer)
         
         self.epsilon = 1e-4
@@ -171,28 +178,28 @@ class EnhancedBiFPN_Layer(nn.Module):
     def forward(self, p3, p4, p5):
         for layer in self.bifpn_layers:
             # Top-down pathway with attention
-            w1 = F.relu(layer['weight1'])
+            w1 = F.relu(layer.weight1)
             w1 = w1 / (w1.sum() + self.epsilon)
-            p4_td = layer['conv1'](w1[0] * p4 + w1[1] * F.interpolate(p5, size=p4.shape[-2:], mode='bilinear', align_corners=False))
+            p4_td = layer.conv1(w1[0] * p4 + w1[1] * F.interpolate(p5, size=p4.shape[-2:], mode='bilinear', align_corners=False))
             
-            w2 = F.relu(layer['weight2'])
+            w2 = F.relu(layer.weight2)
             w2 = w2 / (w2.sum() + self.epsilon)
-            p3_out = layer['conv2'](w2[0] * p3 + w2[1] * F.interpolate(p4_td, size=p3.shape[-2:], mode='bilinear', align_corners=False))
+            p3_out = layer.conv2(w2[0] * p3 + w2[1] * F.interpolate(p4_td, size=p3.shape[-2:], mode='bilinear', align_corners=False))
             
             # Apply attention to p3_out
             B, C, H, W = p3_out.shape
             p3_flat = p3_out.view(B, C, -1).transpose(1, 2)
-            attn_out, _ = layer['attention'](p3_flat, p3_flat, p3_flat)
+            attn_out, _ = layer.attention(p3_flat, p3_flat, p3_flat)
             p3_out = attn_out.transpose(1, 2).view(B, C, H, W)
             
             # Bottom-up pathway
-            w3 = F.relu(layer['weight3'])
+            w3 = F.relu(layer.weight3)
             w3 = w3 / (w3.sum() + self.epsilon)
-            p4_out = layer['conv3'](w3[0] * p4_td + w3[1] * F.interpolate(p3_out, size=p4_td.shape[-2:], mode='bilinear', align_corners=False))
+            p4_out = layer.conv3(w3[0] * p4_td + w3[1] * F.interpolate(p3_out, size=p4_td.shape[-2:], mode='bilinear', align_corners=False))
             
-            w4 = F.relu(layer['weight4'])
+            w4 = F.relu(layer.weight4)
             w4 = w4 / (w4.sum() + self.epsilon)
-            p5_out = layer['conv4'](w4[0] * p5 + w4[1] * F.interpolate(p4_out, size=p5.shape[-2:], mode='bilinear', align_corners=False))
+            p5_out = layer.conv4(w4[0] * p5 + w4[1] * F.interpolate(p4_out, size=p5.shape[-2:], mode='bilinear', align_corners=False))
             
             p3, p4, p5 = p3_out, p4_out, p5_out
         
