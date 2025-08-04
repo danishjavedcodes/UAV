@@ -623,6 +623,18 @@ class AdvancedHMAYTSFTrainer:
         self.base_yolo = YOLO()
         self.base_yolo.model = self.model
         
+        # Ensure the model has all required YOLO attributes
+        if not hasattr(self.model, 'yaml'):
+            self.model.yaml = {'nc': 4, 'names': ['bus', 'car', 'truck', 'van']}
+        if not hasattr(self.model, 'ckpt'):
+            self.model.ckpt = None
+        if not hasattr(self.model, 'cfg'):
+            self.model.cfg = None
+        if not hasattr(self.model, 'task'):
+            self.model.task = 'detect'
+        if not hasattr(self.model, 'verbose'):
+            self.model.verbose = True
+        
         # Add advanced callbacks to the YOLO object
         self.base_yolo.add_callback('on_val_end', self.on_epoch_end)
         self.base_yolo.add_callback('on_train_epoch_end', self.on_train_epoch_end)
@@ -1181,20 +1193,20 @@ def main():
         print(f"🎯 Best parameters found: {best_params}")
     else:
         print("🚀 Starting ULTRA-OPTIMIZED training for 98%+ accuracy in <20 epochs...")
-        results = trainer.train_model(
-            data_yaml=args.data,
-            epochs=args.epochs,
-            img_size=args.img_size,
-            batch_size=args.batch_size,
-            save_dir=args.save_dir,
+    results = trainer.train_model(
+        data_yaml=args.data,
+        epochs=args.epochs,
+        img_size=args.img_size,
+        batch_size=args.batch_size,
+        save_dir=args.save_dir,
             patience=args.patience,
             resume=args.resume
-        )
-        
-        if results:
+    )
+    
+    if results:
             print("✅ Ultra-optimized training completed successfully!")
             print(f"📊 Final Results: {results}")
-        else:
+    else:
             print("❌ Ultra-optimized training failed!")
     
     print("🎯 Target: 98%+ Accuracy Achieved in <20 Epochs!")

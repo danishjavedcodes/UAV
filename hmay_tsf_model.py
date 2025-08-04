@@ -49,6 +49,13 @@ class UltraOptimizedHMAY_TSF(nn.Module):
         self.names = ['bus', 'car', 'truck', 'van']  # Class names
         self.stride = torch.tensor([8, 16, 32])  # Strides for different scales
         
+        # Add required YOLO compatibility attributes
+        self.yaml = {'nc': num_classes, 'names': self.names}  # Required by YOLO
+        self.ckpt = None  # Checkpoint path
+        self.cfg = None   # Configuration
+        self.task = 'detect'  # Task type
+        self.verbose = True  # Verbose mode
+        
         # Add YOLO compatibility methods
         self.add_callback = self.base_yolo.add_callback
         self.train = self.base_yolo.train
