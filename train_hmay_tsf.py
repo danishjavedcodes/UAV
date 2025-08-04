@@ -278,7 +278,7 @@ class AdvancedAugmentation:
 class AdvancedHMAYTSFTrainer:
     """Advanced trainer for HMAY-TSF model with comprehensive optimization"""
     
-    def __init__(self, model_size='s', device='auto', project_name='HMAY-TSF-Advanced'):
+    def __init__(self, model_size='n', device='auto', project_name='HMAY-TSF-Advanced'):
         self.device = device if device != 'auto' else ('cuda' if torch.cuda.is_available() else 'cpu')
         self.model_size = model_size
         self.project_name = project_name
@@ -404,7 +404,7 @@ class AdvancedHMAYTSFTrainer:
         print("Setting up Advanced HMAY-TSF model with YOLOv11...")
         
         # Use YOLOv11 instead of YOLOv8
-        model_name = f'yolov11{self.model_size}n.pt' if pretrained else f'yolov11{self.model_size}.yaml'
+        model_name = f'yolov11{self.model_size}.pt' if pretrained else f'yolov11{self.model_size}.yaml'
         
         try:
             # Load YOLOv11 model
