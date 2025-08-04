@@ -905,52 +905,6 @@ class AdvancedHMAYTSFTrainer:
         
         return results
 
-class ModelDownloader:
-    """Advanced model downloader for YOLO models"""
-    
-    def __init__(self):
-        self.model_urls = {
-            'yolov11n': 'https://github.com/ultralytics/assets/releases/download/v11.0.0/yolov11n.pt',
-            'yolov11s': 'https://github.com/ultralytics/assets/releases/download/v11.0.0/yolov11s.pt',
-            'yolov11m': 'https://github.com/ultralytics/assets/releases/download/v11.0.0/yolov11m.pt',
-            'yolov11l': 'https://github.com/ultralytics/assets/releases/download/v11.0.0/yolov11l.pt',
-            'yolov11x': 'https://github.com/ultralytics/assets/releases/download/v11.0.0/yolov11x.pt',
-            'yolov8n': 'https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt',
-        }
-        self.download_dir = Path('./models')
-        self.download_dir.mkdir(parents=True, exist_ok=True)
-    
-    def download_model(self, model_name):
-        """Download a YOLO model from Ultralytics assets."""
-        if model_name not in self.model_urls:
-            print(f"Model '{model_name}' not found in available models.")
-            return False
-        
-        model_path = self.download_dir / model_name
-        
-        if model_path.exists():
-            print(f"Model '{model_name}' already exists at {model_path}. Skipping download.")
-            return True
-        
-        print(f"Downloading {model_name} from {self.model_urls[model_name]} to {model_path}...")
-        
-        try:
-            urllib.request.urlretrieve(self.model_urls[model_name], model_path, reporthook=self._download_progress)
-            print(f"✅ Model '{model_name}' downloaded successfully to {model_path}")
-            return True
-        except Exception as e:
-            print(f"❌ Error downloading {model_name}: {e}")
-            return False
-    
-    def _download_progress(self, count, block_size, total_size):
-        """Progress bar for model downloads."""
-        if total_size == 0:
-            print("Downloading...")
-            return
-        
-        downloaded = count * block_size
-        percentage = min(downloaded * 100 / total_size, 100)
-        print(f"\rDownloading: {percentage:.1f}%", end="")
 
 class DatasetDownloader:
     """Advanced dataset downloader for Roboflow aerial vehicles dataset"""
@@ -1044,7 +998,7 @@ class_distribution:
 def main():
     """Main function with updated dataset configuration"""
     parser = argparse.ArgumentParser(description='Advanced HMAY-TSF Training with 4-class dataset')
-    parser.add_argument('--data', type=str, default='./dataset/dataset.yaml', 
+    parser.add_argument('--data', type=str, default='./Aerial-Vehicles-1/data.yaml', 
                        help='Path to dataset YAML file')
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs')
     parser.add_argument('--img-size', type=int, default=640, help='Image size')
