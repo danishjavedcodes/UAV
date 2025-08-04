@@ -169,65 +169,78 @@ class UltraOptimizedHMAY_TSF(nn.Module):
                 nn.init.constant_(m.bias, 0)
         
     def _setup_aggressive_fine_tuning(self):
-        """Setup aggressive fine-tuning for fast convergence"""
-        print("🔒 Setting up aggressive fine-tuning for 98%+ accuracy...")
+        """Setup complete fine-tuning - YOLO backbone + HMAY-TSF layers"""
+        print("🔒 Setting up complete fine-tuning - YOLO backbone + HMAY-TSF layers...")
         
-        # Freeze only 60% of YOLO backbone (less freezing for faster adaptation)
-        total_params = sum(p.numel() for p in self.base_yolo.model.parameters())
-        freeze_params = int(total_params * 0.6)
-        
-        frozen_count = 0
+        # Train ALL YOLO backbone layers (no freezing)
         for name, param in self.base_yolo.model.named_parameters():
-            if frozen_count < freeze_params:
-                param.requires_grad = False
-                print(f"  Frozen: {name}")
-                frozen_count += param.numel()
-            else:
-                param.requires_grad = True
-                print(f"  Trainable: {name}")
+            param.requires_grad = True
+            print(f"  Trainable YOLO: {name}")
         
-        # All enhanced components are trainable
+        # Train ALL HMAY-TSF enhanced components
         for name, param in self.named_parameters():
             if 'base_yolo' not in name:
                 param.requires_grad = True
-                print(f"  Extra trainable: {name}")
+                print(f"  Trainable HMAY-TSF: {name}")
         
         # Print summary
-        frozen_params = sum(p.numel() for p in self.base_yolo.model.parameters() if not p.requires_grad)
+        total_params = sum(p.numel() for p in self.parameters())
         trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
-        total_model_params = sum(p.numel() for p in self.parameters())
         
-        print(f"\nAggressive Fine-tuning Summary:")
-        print(f"  Frozen YOLO parameters: {frozen_params:,}")
-        print(f"  Trainable YOLO parameters: {trainable_params - frozen_params:,}")
-        print(f"  Extra trainable parameters: {trainable_params - (total_model_params - frozen_params):,}")
-        print(f"  Total trainable: {trainable_params:,}")
-        print(f"  Freeze ratio: {frozen_params/total_model_params*100:.1f}%")
+        print(f"\nComplete Fine-tuning Summary:")
+        print(f"  Total parameters: {total_params:,}")
+        print(f"  Trainable parameters: {trainable_params:,}")
+        print(f"  YOLO backbone: Fully trainable")
+        print(f"  HMAY-TSF layers: Fully trainable")
+        print(f"  Training ratio: {trainable_params/total_params*100:.1f}%")
+        print("✅ Complete fine-tuning setup - all layers trainable!")
         
     def forward(self, x):
-        """Ultra-optimized forward pass - properly integrated with YOLO training"""
-        # Extract features directly from the base YOLO model layers
-        features = self._extract_yolo_features(x)
+        """Complete forward pass - YOLO fine-tuning + HMAY-TSF training"""
+        # Extract features from YOLO backbone (fine-tuned)
+        yolo_features = self._extract_yolo_features(x)
         
-        # Apply ultra-optimized components
-        enhanced_features = self._apply_ultra_optimized_components(features)
+        # Apply HMAY-TSF enhancements (trained)
+        enhanced_features = self._apply_ultra_optimized_components(yolo_features)
         
-        # Apply detection head to enhanced features
+        # Apply detection head (trained)
         enhanced_detection = self.detection_head(enhanced_features)
         
-        # For training compatibility, return the enhanced detection directly
-        # This ensures our enhancements are used during training
-        if isinstance(enhanced_detection, torch.Tensor):
-            # Reshape to match YOLO's expected format
-            B, C, H, W = enhanced_detection.shape
-            # Reshape to [B, num_anchors * (5 + num_classes), H, W]
-            enhanced_detection = enhanced_detection.view(B, 3, 5 + self.num_classes, H, W)
-            enhanced_detection = enhanced_detection.permute(0, 1, 3, 4, 2).contiguous()
-            enhanced_detection = enhanced_detection.view(B, -1, 5 + self.num_classes)
+        # Get YOLO's original detection for combination
+        yolo_detection = self.base_yolo.model(x)
+        
+        # Combine YOLO and HMAY-TSF detections
+        combined_output = self._combine_detections(yolo_detection, enhanced_detection)
+        
+        return combined_output
+    
+    def _combine_detections(self, yolo_detection, enhanced_detection):
+        """Combine YOLO and HMAY-TSF detections"""
+        if isinstance(yolo_detection, (list, tuple)):
+            # YOLO output is a list of tensors for multi-scale detection
+            combined_output = list(yolo_detection)
             
-            return enhanced_detection
+            # Add our enhanced detection as an additional scale
+            if isinstance(enhanced_detection, torch.Tensor):
+                # Reshape enhanced detection to match YOLO format
+                B, C, H, W = enhanced_detection.shape
+                enhanced_detection = enhanced_detection.view(B, 3, 5 + self.num_classes, H, W)
+                enhanced_detection = enhanced_detection.permute(0, 1, 3, 4, 2).contiguous()
+                enhanced_detection = enhanced_detection.view(B, -1, 5 + self.num_classes)
+                combined_output.append(enhanced_detection)
+            
+            return combined_output
         else:
-            return enhanced_detection
+            # YOLO output is a single tensor
+            if isinstance(enhanced_detection, torch.Tensor):
+                # Reshape enhanced detection to match YOLO format
+                B, C, H, W = enhanced_detection.shape
+                enhanced_detection = enhanced_detection.view(B, 3, 5 + self.num_classes, H, W)
+                enhanced_detection = enhanced_detection.permute(0, 1, 3, 4, 2).contiguous()
+                enhanced_detection = enhanced_detection.view(B, -1, 5 + self.num_classes)
+                return [yolo_detection, enhanced_detection]
+            else:
+                return [yolo_detection]
     
     def predict(self, x):
         """Enhanced prediction with HMAY-TSF components"""

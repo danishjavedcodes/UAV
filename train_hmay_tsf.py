@@ -546,7 +546,7 @@ class AdvancedHMAYTSFTrainer:
         # Reset epoch counter for this training session
         self.current_epoch = 0
 
-        # ULTRA-OPTIMIZED HYPERPARAMETERS FOR 98%+ ACCURACY IN <20 EPOCHS
+        # ULTRA-OPTIMIZED HYPERPARAMETERS FOR COMPLETE MODEL TRAINING
         train_args = {
             'data': data_yaml,
             'epochs': epochs,
@@ -562,9 +562,9 @@ class AdvancedHMAYTSFTrainer:
             'name': run_name,
             'exist_ok': True,
             
-            # ULTRA-OPTIMIZED OPTIMIZER FOR 98%+ ACCURACY
-            'optimizer': 'AdamW',  # Best optimizer for convergence
-            'lr0': 0.001,  # Conservative learning rate for stability
+            # OPTIMIZED OPTIMIZER FOR COMPLETE MODEL TRAINING
+            'optimizer': 'AdamW',  # Best optimizer for complete model training
+            'lr0': 0.0005,  # Lower learning rate for complete model training
             'lrf': 0.1,   # Standard decay
             'momentum': 0.937,  # Standard momentum
             'weight_decay': 0.0005,  # Standard regularization
@@ -572,12 +572,12 @@ class AdvancedHMAYTSFTrainer:
             'warmup_momentum': 0.8,
             'warmup_bias_lr': 0.1,
             
-            # ULTRA-OPTIMIZED LOSS WEIGHTS FOR UAV DETECTION
+            # OPTIMIZED LOSS WEIGHTS FOR COMPLETE MODEL
             'box': 0.05,   # Standard box loss weight
             'cls': 0.5,    # Standard classification weight
             'dfl': 1.5,    # Standard DFL weight
             
-            # ULTRA-OPTIMIZED DETECTION THRESHOLDS
+            # OPTIMIZED DETECTION THRESHOLDS
             'conf': 0.25,  # Standard confidence threshold
             'iou': 0.45,   # Standard IoU threshold
             
@@ -596,7 +596,7 @@ class AdvancedHMAYTSFTrainer:
             'mixup': 0.0,   # No mixup for stability
             'copy_paste': 0.0,  # No copy-paste
             
-            # ULTRA-OPTIMIZED EVALUATION SETTINGS
+            # OPTIMIZED EVALUATION SETTINGS
             'max_det': 300,  # Standard max detections
             
             # PERFORMANCE FEATURES
@@ -615,13 +615,25 @@ class AdvancedHMAYTSFTrainer:
             'save_period': 5,  # Save every 5 epochs
         }
 
-        # Use our enhanced model for training, not just the base YOLO
-        # Create a new YOLO object and set our model as its model
+        # Use our complete model for training - YOLO backbone + HMAY-TSF layers
+        # Create a new YOLO object and set our complete model as its model
         from ultralytics import YOLO
         
-        # Use the base YOLO model for training to avoid YAML configuration issues
-        # Our enhanced model will be used for inference
-        self.base_yolo = self.model.base_yolo
+        # Create a new YOLO object and set our complete model as its model
+        self.base_yolo = YOLO()
+        self.base_yolo.model = self.model
+        
+        # Ensure the model has all required YOLO attributes
+        if not hasattr(self.model, 'yaml'):
+            self.model.yaml = {'nc': 4, 'names': ['bus', 'car', 'truck', 'van']}
+        if not hasattr(self.model, 'ckpt'):
+            self.model.ckpt = None
+        if not hasattr(self.model, 'cfg'):
+            self.model.cfg = None
+        if not hasattr(self.model, 'task'):
+            self.model.task = 'detect'
+        if not hasattr(self.model, 'verbose'):
+            self.model.verbose = True
         
         # Add advanced callbacks to the YOLO object
         self.base_yolo.add_callback('on_val_end', self.on_epoch_end)
