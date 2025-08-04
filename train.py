@@ -157,32 +157,30 @@ class CustomLoss(nn.Module):
         batch_size = predictions.size(0)
         
         for i in range(batch_size):
-            pred = predictions[i]  # [3, H, W, 5+num_classes]
+            pred = predictions[i]  # [anchors, features]
             target = targets[i]    # [num_objects, 5]
             
             if len(target) == 0:
                 # No objects in this image
                 continue
             
-            # Reshape predictions to expected format
-            if pred.dim() == 2:  # [anchors, features]
-                # Reshape to [3, H, W, 5+num_classes]
-                H = W = int(math.sqrt(pred.size(0) // 3))
-                pred = pred.view(3, H, W, -1)
-            
-            # Ensure correct shape
-            if pred.dim() == 4:  # [3, H, W, features]
-                B, C, H, W, D = pred.shape
-                pred = pred.view(-1, D)  # [3*H*W, 5+num_classes]
+            # Handle 3D tensor shape [batch, anchors, features]
+            if pred.dim() == 1:  # [anchors, features] - already correct
+                pass
+            elif pred.dim() == 2:  # [anchors, features] - already correct
+                pass
+            elif pred.dim() == 3:  # [batch, anchors, features] - extract first batch
+                pred = pred[0]  # Take first batch
             else:
                 # Skip this prediction if shape is unexpected
                 continue
             
+            # Now pred should be [anchors, features]
             # Extract components
-            pred_xy = pred[:, :2]    # [3*H*W, 2]
-            pred_wh = pred[:, 2:4]   # [3*H*W, 2]
-            pred_obj = pred[:, 4]    # [3*H*W]
-            pred_cls = pred[:, 5:]   # [3*H*W, num_classes]
+            pred_xy = pred[:, :2]    # [anchors, 2]
+            pred_wh = pred[:, 2:4]   # [anchors, 2]
+            pred_obj = pred[:, 4]    # [anchors]
+            pred_cls = pred[:, 5:]   # [anchors, num_classes]
             
             # Create target tensors
             target_xy = target[:, 1:3]  # [num_objects, 2]
