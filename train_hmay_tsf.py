@@ -715,7 +715,7 @@ class AdvancedHMAYTSFTrainer:
     def print_epoch_metrics(self, metrics_dict):
         """Print detailed advanced metrics after each epoch"""
         print("\n" + "="*120)
-        print(f"ADVANCED EPOCH {metrics_dict.get('epoch', 'N/A')} RESULTS")
+        print(f"EPOCH {metrics_dict.get('epoch', 'N/A')} RESULTS")
         print("="*120)
         
         # Training metrics
@@ -736,15 +736,7 @@ class AdvancedHMAYTSFTrainer:
         print(f"  mAP@0.5: {metrics_dict.get('map50', 'N/A'):.6f}")
         print(f"  mAP@0.5:0.95: {metrics_dict.get('map50_95', 'N/A'):.6f}")
         
-        # Advanced metrics
-        print("\nADVANCED METRICS:")
-        print(f"  Small Object Recall: {metrics_dict.get('small_object_recall', 'N/A'):.6f}")
-        print(f"  Occlusion-Aware F1: {metrics_dict.get('occlusion_aware_f1', 'N/A'):.6f}")
-        print(f"  Focal Loss: {metrics_dict.get('focal_loss', 'N/A'):.6f}")
-        print(f"  IoU Loss: {metrics_dict.get('iou_loss', 'N/A'):.6f}")
-        print(f"  Curriculum Stage: {metrics_dict.get('curriculum_stage', 'N/A')}")
-        print(f"  Augmentation Strength: {metrics_dict.get('augmentation_strength', 'N/A'):.2f}")
-        
+        # Learning rate
         print(f"\nLearning Rate: {metrics_dict.get('lr', 'N/A'):.8f}")
         print("="*120 + "\n")
         
