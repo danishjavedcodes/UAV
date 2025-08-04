@@ -553,137 +553,146 @@ class AdvancedHMAYTSFTrainer:
             return None
     
     def on_epoch_end(self, trainer):
-        """Advanced callback function called at the end of each epoch"""
+        """Real callback function called at the end of each epoch - using actual training metrics"""
         try:
             # Update curriculum learning
             self.curriculum_learning.update_epoch(self.current_epoch)
             self.current_epoch += 1
             epoch = self.current_epoch
             
-            # Extract advanced metrics
+            # Initialize metrics dictionary
             metrics = {}
             metrics['epoch'] = epoch
             
-            # AGGRESSIVE PROGRESS TOWARDS 99% BY EPOCH 10
-            # Exponential growth curve: starts at 20%, reaches 99% by epoch 10
-            if epoch <= 10:
-                # Exponential growth: 0.20 + (0.99 - 0.20) * (epoch / 10)^2
-                progress_factor = (epoch / 10.0) ** 1.5  # Faster early growth
-                base_progress = 0.20 + (0.99 - 0.20) * progress_factor
-                
-                # Ensure we reach 99% by epoch 10
-                if epoch == 10:
-                    base_progress = 0.99
-                elif epoch >= 8:
-                    # Accelerate in final epochs
-                    remaining_epochs = 10 - epoch
-                    base_progress = 0.99 - (remaining_epochs * 0.01)
-            else:
-                # After epoch 10, maintain 99%+ performance
-                base_progress = 0.99 + (epoch - 10) * 0.001
-            
-            # Apply aggressive metrics with slight variations
-            metrics['val_precision'] = base_progress * (0.98 + epoch * 0.002)  # Slightly higher
-            metrics['val_recall'] = base_progress * (0.97 + epoch * 0.003)     # Slightly lower initially
-            metrics['map50'] = base_progress * (0.96 + epoch * 0.004)          # mAP grows faster
-            metrics['map50_95'] = base_progress * (0.92 + epoch * 0.008)       # mAP50-95 grows fastest
-            metrics['val_f1'] = base_progress * (0.975 + epoch * 0.0025)       # F1 balanced
-            metrics['val_accuracy'] = base_progress * (0.98 + epoch * 0.002)   # Accuracy high
-            
-            # Decreasing loss with exponential decay
-            loss_decay = max(0.01, 0.5 ** (epoch / 3.0))  # Faster loss reduction
-            metrics['train_loss'] = 0.5 * loss_decay
-            metrics['val_loss'] = 0.45 * loss_decay
-            metrics['lr'] = 0.001 * (0.95 ** (epoch // 5))  # Gradual LR reduction
-            
-            # Get curriculum learning info
-            stage = self.curriculum_learning.get_current_stage()
-            metrics['curriculum_stage'] = stage['difficulty']
-            metrics['augmentation_strength'] = stage['augmentation_strength']
-            
-            # Try to get actual metrics from trainer (but use our aggressive targets)
+            # Get REAL metrics from actual training
             if hasattr(trainer, 'metrics') and trainer.metrics is not None:
                 det_metrics = trainer.metrics
                 
                 if hasattr(det_metrics, 'box') and det_metrics.box is not None:
                     box_metrics = det_metrics.box
                     
-                    # Extract standard metrics but boost them towards our targets
+                    # Extract ACTUAL metrics without any artificial boosting
                     try:
+                        # Get real precision and recall
                         if hasattr(box_metrics, 'mp') and box_metrics.mp is not None:
-                            actual_precision = float(box_metrics.mp)
-                            # Boost actual results towards our targets
-                            metrics['val_precision'] = max(actual_precision * 1.5, metrics['val_precision'])
+                            metrics['val_precision'] = float(box_metrics.mp)
+                        else:
+                            metrics['val_precision'] = 0.0
+                            
                         if hasattr(box_metrics, 'mr') and box_metrics.mr is not None:
-                            actual_recall = float(box_metrics.mr)
-                            metrics['val_recall'] = max(actual_recall * 1.5, metrics['val_recall'])
+                            metrics['val_recall'] = float(box_metrics.mr)
+                        else:
+                            metrics['val_recall'] = 0.0
+                            
+                        # Get real mAP values
                         if hasattr(box_metrics, 'map50') and box_metrics.map50 is not None:
-                            actual_map50 = float(box_metrics.map50)
-                            metrics['map50'] = max(actual_map50 * 1.5, metrics['map50'])
+                            metrics['map50'] = float(box_metrics.map50)
+                        else:
+                            metrics['map50'] = 0.0
+                            
                         if hasattr(box_metrics, 'map') and box_metrics.map is not None:
-                            actual_map = float(box_metrics.map)
-                            metrics['map50_95'] = max(actual_map * 1.5, metrics['map50_95'])
-                    except (ValueError, TypeError) as e:
-                        print(f"Warning: Error extracting metrics: {e}")
-                        # Keep our aggressive target values
-                    
-                    # Recalculate F1 and accuracy based on boosted values
-                    precision = metrics['val_precision']
-                    recall = metrics['val_recall']
-                    if precision + recall > 0:
-                        metrics['val_f1'] = 2 * (precision * recall) / (precision + recall)
+                            metrics['map50_95'] = float(box_metrics.map)
+                        else:
+                            metrics['map50_95'] = 0.0
+                        
+                        # Calculate real F1 score from actual precision and recall
+                        precision = metrics['val_precision']
+                        recall = metrics['val_recall']
+                        if precision + recall > 0:
+                            metrics['val_f1'] = 2 * (precision * recall) / (precision + recall)
+                        else:
+                            metrics['val_f1'] = 0.0
+                        
+                        # Calculate real accuracy (approximated as average of precision and recall)
                         metrics['val_accuracy'] = (precision + recall) / 2
+                        
+                    except (ValueError, TypeError) as e:
+                        print(f"Warning: Error extracting real metrics: {e}")
+                        # Set default values if extraction fails
+                        metrics['val_precision'] = 0.0
+                        metrics['val_recall'] = 0.0
+                        metrics['map50'] = 0.0
+                        metrics['map50_95'] = 0.0
+                        metrics['val_f1'] = 0.0
+                        metrics['val_accuracy'] = 0.0
+                else:
+                    print("Warning: No box metrics available")
+                    metrics['val_precision'] = 0.0
+                    metrics['val_recall'] = 0.0
+                    metrics['map50'] = 0.0
+                    metrics['map50_95'] = 0.0
+                    metrics['val_f1'] = 0.0
+                    metrics['val_accuracy'] = 0.0
+            else:
+                print("Warning: No trainer metrics available")
+                metrics['val_precision'] = 0.0
+                metrics['val_recall'] = 0.0
+                metrics['map50'] = 0.0
+                metrics['map50_95'] = 0.0
+                metrics['val_f1'] = 0.0
+                metrics['val_accuracy'] = 0.0
             
-            # Ensure all metrics reach 99% by epoch 10
-            if epoch >= 10:
-                metrics['val_precision'] = max(metrics['val_precision'], 0.99)
-                metrics['val_recall'] = max(metrics['val_recall'], 0.99)
-                metrics['map50'] = max(metrics['map50'], 0.99)
-                metrics['map50_95'] = max(metrics['map50_95'], 0.95)
-                metrics['val_f1'] = max(metrics['val_f1'], 0.99)
-                metrics['val_accuracy'] = max(metrics['val_accuracy'], 0.99)
+            # Get REAL loss values if available
+            if hasattr(trainer, 'loss') and trainer.loss is not None:
+                metrics['train_loss'] = float(trainer.loss)
+            else:
+                metrics['train_loss'] = 0.0
+                
+            if hasattr(trainer, 'val_loss') and trainer.val_loss is not None:
+                metrics['val_loss'] = float(trainer.val_loss)
+            else:
+                metrics['val_loss'] = 0.0
             
-            # For training metrics, use validation metrics as approximation with boost
-            metrics['train_precision'] = min(metrics['val_precision'] * 1.01, 0.998)
-            metrics['train_recall'] = min(metrics['val_recall'] * 1.01, 0.998)
-            metrics['train_f1'] = min(metrics['val_f1'] * 1.01, 0.998)
-            metrics['train_accuracy'] = min(metrics['val_accuracy'] * 1.01, 0.998)
+            # Get REAL learning rate if available
+            if hasattr(trainer, 'optimizer') and trainer.optimizer is not None:
+                current_lr = trainer.optimizer.param_groups[0]['lr']
+                metrics['lr'] = current_lr
+            else:
+                metrics['lr'] = 0.0
             
-            # Advanced loss components with aggressive decay
-            metrics['focal_loss'] = 0.08 * loss_decay
-            metrics['iou_loss'] = 0.04 * loss_decay
-            metrics['box_loss'] = 0.12 * loss_decay
+            # Get curriculum learning info
+            stage = self.curriculum_learning.get_current_stage()
+            metrics['curriculum_stage'] = stage['difficulty']
+            metrics['augmentation_strength'] = stage['augmentation_strength']
             
-            # Advanced metrics with aggressive targets
-            metrics['small_object_recall'] = min(metrics['val_recall'] * 1.05, 0.998)
-            metrics['occlusion_aware_f1'] = min(metrics['val_f1'] * 1.03, 0.998)
+            # Set training metrics to validation metrics (no artificial boost)
+            metrics['train_precision'] = metrics['val_precision']
+            metrics['train_recall'] = metrics['val_recall']
+            metrics['train_f1'] = metrics['val_f1']
+            metrics['train_accuracy'] = metrics['val_accuracy']
             
-            # Get gradient norm if available
-            metrics['gradient_norm'] = 0.5 * loss_decay
+            # Set loss components to 0 if not available (no fake values)
+            metrics['focal_loss'] = 0.0
+            metrics['iou_loss'] = 0.0
+            metrics['box_loss'] = 0.0
+            
+            # Set advanced metrics to 0 if not available (no fake values)
+            metrics['small_object_recall'] = 0.0
+            metrics['occlusion_aware_f1'] = 0.0
+            metrics['gradient_norm'] = 0.0
             
             # Log to CSV
             self.log_metrics_to_csv(metrics)
             
-            # Print metrics
+            # Print REAL metrics
             self.print_epoch_metrics(metrics)
             
-            # Update best metrics
+            # Update best metrics based on REAL performance
             if metrics['val_f1'] > self.best_map:
                 self.best_map = metrics['val_f1']
                 self.best_metrics = metrics.copy()
                 print(f"🎯 NEW BEST F1-SCORE: {self.best_map:.6f}")
             
-            # Special message for epoch 10
-            if epoch == 10:
-                print(f"\n🎉 TARGET ACHIEVED! 99%+ Performance by Epoch 10!")
-                print(f"   Precision: {metrics['val_precision']:.6f}")
-                print(f"   Recall: {metrics['val_recall']:.6f}")
-                print(f"   F1-Score: {metrics['val_f1']:.6f}")
-                print(f"   Accuracy: {metrics['val_accuracy']:.6f}")
-                print(f"   mAP@0.5: {metrics['map50']:.6f}")
+            # Print realistic progress message
+            print(f"\n📊 Epoch {epoch} - Real Performance:")
+            print(f"   Precision: {metrics['val_precision']:.6f}")
+            print(f"   Recall: {metrics['val_recall']:.6f}")
+            print(f"   F1-Score: {metrics['val_f1']:.6f}")
+            print(f"   mAP@0.5: {metrics['map50']:.6f}")
+            print(f"   mAP@0.5:0.95: {metrics['map50_95']:.6f}")
             
         except Exception as e:
-            print(f"Error in advanced epoch callback: {e}")
+            print(f"Error in real epoch callback: {e}")
             import traceback
             traceback.print_exc()
     
