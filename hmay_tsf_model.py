@@ -553,6 +553,7 @@ class HMAY_TSF(nn.Module):
     def _setup_fine_tuning(self):
         """Setup fine-tuning: freeze YOLO weights, train extra layers"""
         print("🔒 Setting up fine-tuning strategy...")
+        freeze_ratio = 0.8
         
         # Freeze YOLO backbone parameters
         for name, param in self.base_yolo.model.named_parameters():

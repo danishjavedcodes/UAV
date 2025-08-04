@@ -886,10 +886,10 @@ class AdvancedHMAYTSFTrainer:
             
             # AGGRESSIVE OPTIMIZER SETTINGS FOR BETTER LEARNING
             'optimizer': 'AdamW',  # Back to AdamW for better convergence
-            'lr0': 0.001,  # Lower initial learning rate for stability
-            'lrf': 0.1,    # Higher final learning rate
+            'lr0': 0.0001,  # Much lower learning rate
+            'lrf': 0.01,    # Lower final learning rate
             'momentum': 0.95,  # Higher momentum
-            'weight_decay': 0.001,  # Standard weight decay
+            'weight_decay': 0.01,  # Higher regularization
             'warmup_epochs': 1,  # Shorter warmup
             'warmup_momentum': 0.8,
             'warmup_bias_lr': 0.1,
@@ -900,18 +900,18 @@ class AdvancedHMAYTSFTrainer:
             'dfl': 1.5,    # Standard DFL weight
             
             # MINIMAL AUGMENTATION FOR STABLE LEARNING
-            'hsv_h': 0.0,   # No color augmentation
-            'hsv_s': 0.0,
-            'hsv_v': 0.0,
-            'degrees': 0.0,   # No rotation
-            'translate': 0.0,  # No translation
-            'scale': 0.0,     # No scaling
+            'hsv_h': 0.015,   # No color augmentation
+            'hsv_s': 0.7,
+            'hsv_v': 0.4,
+            'degrees': 10.0,   # No rotation
+            'translate': 0.1,  # No translation
+            'scale': 0.5,     # No scaling
             'shear': 0.0,     # No shearing
             'perspective': 0.0,  # No perspective
             'flipud': 0.0,    # No vertical flip
             'fliplr': 0.0,    # No horizontal flip for stability
-            'mosaic': 0.0,    # No mosaic
-            'mixup': 0.0,     # No mixup
+            'mosaic': 0.1,    # No mosaic
+            'mixup': 0.1,     # No mixup
             'copy_paste': 0.0,  # No copy-paste
             
             # BETTER EVALUATION SETTINGS FOR IMPROVED METRICS
@@ -923,7 +923,7 @@ class AdvancedHMAYTSFTrainer:
             'amp': True,  # Keep mixed precision
             'overlap_mask': True,
             'mask_ratio': 4,
-            'dropout': 0.0,  # No dropout
+            'dropout': 0.1,  # Add dropout
             
             # COSINE LEARNING RATE SCHEDULING FOR BETTER CONVERGENCE
             'cos_lr': True,  # Use cosine scheduling
@@ -966,7 +966,7 @@ class AdvancedHMAYTSFTrainer:
             metrics = {}
             metrics['epoch'] = epoch
             
-            # Get REAL learning rate FIRST (this was the issue)
+            # Fix learning rate extraction
             if hasattr(trainer, 'optimizer') and trainer.optimizer is not None:
                 current_lr = trainer.optimizer.param_groups[0]['lr']
                 if isinstance(current_lr, torch.Tensor):
@@ -974,7 +974,7 @@ class AdvancedHMAYTSFTrainer:
                 else:
                     metrics['lr'] = float(current_lr)
             else:
-                metrics['lr'] = 0.01  # Default learning rate
+                metrics['lr'] = 0.001  # Default to reasonable value
             
             # Get REAL metrics from actual training
             if hasattr(trainer, 'metrics') and trainer.metrics is not None:
