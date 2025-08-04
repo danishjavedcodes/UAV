@@ -274,15 +274,13 @@ class CustomTrainer:
             images = images.to(self.device)
             
             # Forward pass
-            with amp.autocast(device_type='cuda' if torch.cuda.is_available() else 'cpu'):
-                predictions = self.model(images)
-                loss, box_loss, cls_loss, obj_loss = self.criterion(predictions, targets)
+            predictions = self.model(images)
+            loss, box_loss, cls_loss, obj_loss = self.criterion(predictions, targets)
             
             # Backward pass
             self.optimizer.zero_grad()
-            self.scaler.scale(loss).backward()
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+            loss.backward()
+            self.optimizer.step()
             
             total_loss += loss.item()
             num_batches += 1
@@ -313,9 +311,8 @@ class CustomTrainer:
                 images = images.to(self.device)
                 
                 # Forward pass
-                with amp.autocast(device_type='cuda' if torch.cuda.is_available() else 'cpu'):
-                    predictions = self.model(images)
-                    loss, box_loss, cls_loss, obj_loss = self.criterion(predictions, targets)
+                predictions = self.model(images)
+                loss, box_loss, cls_loss, obj_loss = self.criterion(predictions, targets)
                 
                 total_loss += loss.item()
                 num_batches += 1
@@ -672,6 +669,17 @@ def main():
                 nn.BatchNorm2d(64),
                 nn.ReLU(inplace=True)
             )
+            
+            # Detection head - define as module attribute
+            self.detection_head = nn.Sequential(
+                nn.Conv2d(64, 256, 3, padding=1),
+                nn.BatchNorm2d(256),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(256, 128, 3, padding=1),
+                nn.BatchNorm2d(128),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(128, 3 * (5 + self.num_classes), 1)  # 3 anchors * (4 bbox + 1 conf + 4 classes)
+            )
         
         def _initialize_weights(self):
             """Initialize weights for fast convergence"""
@@ -773,15 +781,7 @@ def main():
             B, C, H, W = features.shape
             
             # Detection head
-            detection = nn.Sequential(
-                nn.Conv2d(C, 256, 3, padding=1),
-                nn.BatchNorm2d(256),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(256, 128, 3, padding=1),
-                nn.BatchNorm2d(128),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(128, 3 * (5 + self.num_classes), 1)  # 3 anchors * (4 bbox + 1 conf + 4 classes)
-            )(features)
+            detection = self.detection_head(features)
             
             # Reshape to match expected format
             B, C, H, W = detection.shape
