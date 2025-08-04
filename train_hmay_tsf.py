@@ -299,7 +299,7 @@ class AdvancedHMAYTSFTrainer:
         self.curriculum_learning = CurriculumLearning(total_epochs=10)
         
         # Mixed precision training
-        self.scaler = amp.GradScaler()
+        self.scaler = amp.GradScaler('cuda') if torch.cuda.is_available() else amp.GradScaler()
         
         # CSV logging setup
         self.csv_log_path = None
@@ -470,10 +470,8 @@ class AdvancedHMAYTSFTrainer:
         for i, param in enumerate(all_params):
             if i < freeze_layers:
                 param.requires_grad = False
-                print(f"  Frozen layer {i}")
             else:
                 param.requires_grad = True
-                print(f"  Trainable layer {i}")
         
         # Add extra trainable layers for HMAY-TSF methodology
         self._add_extra_trainable_layers()
@@ -510,9 +508,9 @@ class AdvancedHMAYTSFTrainer:
             
             # Add conditional convolution layers to the model
             # This would be integrated into the YOLO model architecture
-            print("  Added conditional convolution layers")
+            pass
         except ImportError:
-            print("  Conditional convolution layers not available")
+            pass
     
     def _add_temporal_spatial_layers(self):
         """Add temporal-spatial fusion layers"""
@@ -521,9 +519,9 @@ class AdvancedHMAYTSFTrainer:
             from hmay_tsf_model import EnhancedTemporalSpatialFusion
             
             # Add temporal-spatial fusion layers
-            print("  Added temporal-spatial fusion layers")
+            pass
         except ImportError:
-            print("  Temporal-spatial fusion layers not available")
+            pass
     
     def _add_super_resolution_layers(self):
         """Add super-resolution layers"""
@@ -532,9 +530,9 @@ class AdvancedHMAYTSFTrainer:
             from hmay_tsf_model import SuperResolutionModule
             
             # Add super-resolution layers
-            print("  Added super-resolution layers")
+            pass
         except ImportError:
-            print("  Super-resolution layers not available")
+            pass
 
     def train_model(self, data_yaml, epochs=10, img_size=640, batch_size=8, 
                    save_dir='./runs/train', patience=100, resume=False):
@@ -726,19 +724,38 @@ class AdvancedHMAYTSFTrainer:
             
             # Get REAL loss values if available
             if hasattr(trainer, 'loss') and trainer.loss is not None:
-                metrics['train_loss'] = float(trainer.loss)
+                # Handle tensor loss properly
+                if isinstance(trainer.loss, torch.Tensor):
+                    if trainer.loss.numel() == 1:
+                        metrics['train_loss'] = float(trainer.loss.item())
+                    else:
+                        # If it's a multi-element tensor, take the mean
+                        metrics['train_loss'] = float(trainer.loss.mean().item())
+                else:
+                    metrics['train_loss'] = float(trainer.loss)
             else:
                 metrics['train_loss'] = 0.0
                 
             if hasattr(trainer, 'val_loss') and trainer.val_loss is not None:
-                metrics['val_loss'] = float(trainer.val_loss)
+                # Handle tensor validation loss properly
+                if isinstance(trainer.val_loss, torch.Tensor):
+                    if trainer.val_loss.numel() == 1:
+                        metrics['val_loss'] = float(trainer.val_loss.item())
+                    else:
+                        # If it's a multi-element tensor, take the mean
+                        metrics['val_loss'] = float(trainer.val_loss.mean().item())
+                else:
+                    metrics['val_loss'] = float(trainer.val_loss)
             else:
                 metrics['val_loss'] = 0.0
             
             # Get REAL learning rate if available
             if hasattr(trainer, 'optimizer') and trainer.optimizer is not None:
                 current_lr = trainer.optimizer.param_groups[0]['lr']
-                metrics['lr'] = current_lr
+                if isinstance(current_lr, torch.Tensor):
+                    metrics['lr'] = float(current_lr.item())
+                else:
+                    metrics['lr'] = float(current_lr)
             else:
                 metrics['lr'] = 0.0
             
@@ -798,7 +815,11 @@ class AdvancedHMAYTSFTrainer:
             # Log current learning rate
             if hasattr(trainer, 'optimizer') and trainer.optimizer is not None:
                 current_lr = trainer.optimizer.param_groups[0]['lr']
-                print(f"Current Learning Rate: {current_lr:.8f}")
+                if isinstance(current_lr, torch.Tensor):
+                    lr_value = float(current_lr.item())
+                else:
+                    lr_value = float(current_lr)
+                print(f"Current Learning Rate: {lr_value:.8f}")
             
         except Exception as e:
             print(f"Error in train epoch callback: {e}")
