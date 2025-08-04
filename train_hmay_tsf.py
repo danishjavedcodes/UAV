@@ -1289,28 +1289,6 @@ class_distribution:
         print(f"✅ Dataset YAML created: {yaml_path}")
         return yaml_path
 
-##  **ULTRA-AGGRESSIVE Changes for 98%+ Performance:**
-
-### **1. Optimizer Changes:**
-- **Switch to SGD**: Better for aggressive learning
-- **Much higher learning rate**: `0.01` (was `0.001`)
-- **No warmup**: Start aggressive immediately
-- **Disable cosine scheduling**: Linear learning rate
-
-### **2. Loss Weights:**
-- **Very low box loss**: `0.05` - focus on classification
-- **Lower classification weight**: `0.3` (was `0.5`)
-- **Standard DFL**: `1.5`
-
-### **3. Augmentation:**
-- **NO AUGMENTATION**: `0.0` for all augmentation parameters
-- **Clean training data** - no distortion
-
-### **4. Fine-tuning Strategy:**
-- **Freeze only 20%** (was 50%) - maximum adaptation
-- **More trainable parameters** for better learning
-
-### **5. Training Parameters:**
 
 def main():
     """Main function with ultra-aggressive parameters for 98%+ performance"""
