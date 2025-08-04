@@ -320,6 +320,29 @@ class IntegratedHMAYTSF(nn.Module):
         # Initialize weights
         self._initialize_weights()
         
+        # Add YOLO compatibility methods
+        self.callbacks = {}
+        
+    def add_callback(self, event, callback):
+        """Add callback for YOLO compatibility"""
+        if event not in self.callbacks:
+            self.callbacks[event] = []
+        self.callbacks[event].append(callback)
+    
+    def train(self, **kwargs):
+        """Train method for YOLO compatibility"""
+        # For now, we'll use the base YOLO model for training
+        # and apply our enhancements during inference
+        return self.base_yolo.train(**kwargs)
+    
+    def val(self, **kwargs):
+        """Validation method for YOLO compatibility"""
+        return self.base_yolo.val(**kwargs)
+    
+    def predict(self, **kwargs):
+        """Prediction method for YOLO compatibility"""
+        return self.base_yolo.predict(**kwargs)
+    
     def _create_conditional_conv(self, in_channels, out_channels):
         """Create conditional convolution layer"""
         return nn.Sequential(
@@ -917,13 +940,13 @@ class AdvancedHMAYTSFTrainer:
             'save_period': 1,  # Save every epoch for monitoring
         }
 
-        # Add advanced callbacks
-        self.model.add_callback('on_val_end', self.on_epoch_end)
-        self.model.add_callback('on_train_epoch_end', self.on_train_epoch_end)
+        # Add advanced callbacks to the base YOLO model
+        self.model.base_yolo.add_callback('on_val_end', self.on_epoch_end)
+        self.model.base_yolo.add_callback('on_train_epoch_end', self.on_train_epoch_end)
 
-        # Start advanced training
+        # Start advanced training using the base YOLO model
         try:
-            results = self.model.train(**train_args)
+            results = self.model.base_yolo.train(**train_args)
             
             # Save advanced training summary
             self.save_advanced_training_summary(full_save_dir, results)
