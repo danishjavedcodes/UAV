@@ -38,12 +38,26 @@ class CustomDataset:
         with open(data_yaml_path, 'r') as f:
             self.config = yaml.safe_load(f)
         
-        # Get paths
-        self.data_path = Path(self.config['path'])
-        self.train_path = self.data_path / self.config['train']
-        self.val_path = self.data_path / self.config['val']
-        self.class_names = self.config['names']
-        self.num_classes = self.config['nc']
+        # Get paths - handle different YAML structures
+        if 'path' in self.config:
+            self.data_path = Path(self.config['path'])
+        else:
+            # If no path specified, use the directory containing the YAML file
+            self.data_path = Path(data_yaml_path).parent
+        
+        # Get train/val paths
+        if 'train' in self.config:
+            self.train_path = self.data_path / self.config['train']
+        else:
+            self.train_path = self.data_path / 'images' / 'train'
+            
+        if 'val' in self.config:
+            self.val_path = self.data_path / self.config['val']
+        else:
+            self.val_path = self.data_path / 'images' / 'val'
+        
+        self.class_names = self.config.get('names', ['bus', 'car', 'truck', 'van'])
+        self.num_classes = self.config.get('nc', 4)
         
         # Get image and label paths
         if is_training:
@@ -53,9 +67,27 @@ class CustomDataset:
             self.img_dir = self.data_path / 'images' / 'val'
             self.label_dir = self.data_path / 'labels' / 'val'
         
+        # Check if directories exist, if not try alternative paths
+        if not self.img_dir.exists():
+            # Try alternative paths
+            if is_training:
+                self.img_dir = self.data_path / 'train' / 'images'
+                self.label_dir = self.data_path / 'train' / 'labels'
+            else:
+                self.img_dir = self.data_path / 'valid' / 'images'
+                self.label_dir = self.data_path / 'valid' / 'labels'
+        
         # Get all image files
-        self.img_files = list(self.img_dir.glob('*.jpg')) + list(self.img_dir.glob('*.png'))
+        self.img_files = []
+        if self.img_dir.exists():
+            self.img_files = list(self.img_dir.glob('*.jpg')) + list(self.img_dir.glob('*.png'))
+        else:
+            print(f"Warning: Image directory {self.img_dir} does not exist")
+        
         print(f"Found {len(self.img_files)} images in {self.img_dir}")
+        print(f"Label directory: {self.label_dir}")
+        print(f"Class names: {self.class_names}")
+        print(f"Number of classes: {self.num_classes}")
     
     def __len__(self):
         return len(self.img_files)
