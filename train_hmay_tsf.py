@@ -761,16 +761,16 @@ class AdvancedHMAYTSFTrainer:
         
         try:
             # Load YOLOv11 model
-            base_yolo = YOLO(model_name)
+            self.base_yolo = YOLO(model_name)  # Store the YOLO object
             print(f"✅ YOLOv11 model {model_name} loaded successfully!")
         except Exception as e:
             print(f"❌ Error loading YOLOv11 model: {e}")
             print("Falling back to YOLOv8...")
             model_name = f'yolov8n.pt' if pretrained else f'yolov8n.yaml'
-            base_yolo = YOLO(model_name)
+            self.base_yolo = YOLO(model_name)  # Store the YOLO object
         
         # Create integrated model
-        self.model = IntegratedHMAYTSF(base_yolo.model, num_classes)
+        self.model = IntegratedHMAYTSF(self.base_yolo.model, num_classes)
         
         # Setup fine-tuning
         if pretrained:
@@ -940,13 +940,13 @@ class AdvancedHMAYTSFTrainer:
             'save_period': 1,  # Save every epoch for monitoring
         }
 
-        # Add advanced callbacks to the base YOLO model
-        self.model.base_yolo.add_callback('on_val_end', self.on_epoch_end)
-        self.model.base_yolo.add_callback('on_train_epoch_end', self.on_train_epoch_end)
+        # Add advanced callbacks to the YOLO object (not the model)
+        self.base_yolo.add_callback('on_val_end', self.on_epoch_end)
+        self.base_yolo.add_callback('on_train_epoch_end', self.on_train_epoch_end)
 
-        # Start advanced training using the base YOLO model
+        # Start advanced training using the YOLO object
         try:
-            results = self.model.base_yolo.train(**train_args)
+            results = self.base_yolo.train(**train_args)
             
             # Save advanced training summary
             self.save_advanced_training_summary(full_save_dir, results)
