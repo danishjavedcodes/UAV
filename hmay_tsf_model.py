@@ -49,6 +49,12 @@ class UltraOptimizedHMAY_TSF(nn.Module):
         self.names = ['bus', 'car', 'truck', 'van']  # Class names
         self.stride = torch.tensor([8, 16, 32])  # Strides for different scales
         
+        # Add YOLO compatibility methods
+        self.add_callback = self.base_yolo.add_callback
+        self.train = self.base_yolo.train
+        self.val = self.base_yolo.val
+        self.predict = self.base_yolo.predict
+        
     def _setup_ultra_optimized_components(self):
         """Setup ultra-optimized components for fast convergence"""
         
@@ -162,17 +168,7 @@ class UltraOptimizedHMAY_TSF(nn.Module):
         
     def forward(self, x):
         """Ultra-optimized forward pass - properly integrated with YOLO training"""
-        # Use YOLO's native forward pass for training compatibility
-        yolo_output = self.base_yolo.model(x)
-        
-        # Apply our enhancements as post-processing
-        enhanced_output = self._apply_enhancements_to_yolo_output(yolo_output, x)
-        
-        return enhanced_output
-    
-    def _apply_enhancements_to_yolo_output(self, yolo_output, x):
-        """Apply HMAY-TSF enhancements to YOLO output"""
-        # Extract features for enhancement
+        # Extract features directly from the base YOLO model layers
         features = self._extract_yolo_features(x)
         
         # Apply ultra-optimized components
@@ -181,24 +177,19 @@ class UltraOptimizedHMAY_TSF(nn.Module):
         # Apply detection head to enhanced features
         enhanced_detection = self.detection_head(enhanced_features)
         
-        # Combine YOLO output with enhanced output
-        if isinstance(yolo_output, (list, tuple)):
-            # YOLO output is a list of tensors for multi-scale detection
-            combined_output = list(yolo_output)
+        # For training compatibility, return the enhanced detection directly
+        # This ensures our enhancements are used during training
+        if isinstance(enhanced_detection, torch.Tensor):
+            # Reshape to match YOLO's expected format
+            B, C, H, W = enhanced_detection.shape
+            # Reshape to [B, num_anchors * (5 + num_classes), H, W]
+            enhanced_detection = enhanced_detection.view(B, 3, 5 + self.num_classes, H, W)
+            enhanced_detection = enhanced_detection.permute(0, 1, 3, 4, 2).contiguous()
+            enhanced_detection = enhanced_detection.view(B, -1, 5 + self.num_classes)
             
-            # Add our enhanced detection as an additional scale
-            if isinstance(enhanced_detection, torch.Tensor):
-                combined_output.append(enhanced_detection)
-            elif isinstance(enhanced_detection, (list, tuple)):
-                combined_output.extend(enhanced_detection)
-            
-            return combined_output
+            return enhanced_detection
         else:
-            # YOLO output is a single tensor
-            if isinstance(enhanced_detection, torch.Tensor):
-                return [yolo_output, enhanced_detection]
-            else:
-                return [yolo_output] + enhanced_detection
+            return enhanced_detection
     
     def predict(self, x):
         """Enhanced prediction with HMAY-TSF components"""

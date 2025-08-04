@@ -39,8 +39,7 @@ except ImportError:
     print("⚠️  Roboflow not available. Install with: pip install roboflow")
     ROBOFLOW_AVAILABLE = False
 
-from hmay_tsf_model import HMAY_TSF, prepare_visdrone_dataset
-from data_preparation import prepare_visdrone_dataset as prep_dataset, get_dataloader
+from hmay_tsf_model import UltraOptimizedHMAY_TSF, get_ultra_optimized_training_args
 
 class AdvancedFocalLoss(nn.Module):
     """Advanced Focal Loss with label smoothing and class balancing"""
@@ -616,6 +615,14 @@ class AdvancedHMAYTSFTrainer:
             'save_period': 5,  # Save every 5 epochs
         }
 
+        # Use our enhanced model for training, not just the base YOLO
+        # Create a new YOLO object and set our model as its model
+        from ultralytics import YOLO
+        
+        # Create a new YOLO object and set our model as its model
+        self.base_yolo = YOLO()
+        self.base_yolo.model = self.model
+        
         # Add advanced callbacks to the YOLO object
         self.base_yolo.add_callback('on_val_end', self.on_epoch_end)
         self.base_yolo.add_callback('on_train_epoch_end', self.on_train_epoch_end)
