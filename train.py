@@ -212,46 +212,80 @@ class SimpleHMAYTSF(nn.Module):
         
         return output
 
-def calculate_metrics(predictions, targets, num_classes=4):
-    """Calculate accuracy, precision, recall, and F1 score"""
-    all_preds = []
-    all_targets = []
+class MetricsCalculator:
+    """Calculate training and validation metrics"""
     
-    for pred, target in zip(predictions, targets):
-        # Convert predictions to class predictions (simplified)
-        # For object detection, we'll use the class with highest confidence
-        if pred.size(0) > 0:
-            # Get class predictions (assuming last num_classes dimensions are class scores)
-            class_scores = pred[:, -num_classes:]  # [num_objects, num_classes]
-            pred_classes = torch.argmax(class_scores, dim=1)  # [num_objects]
-            all_preds.extend(pred_classes.cpu().numpy())
+    def __init__(self, num_classes=4):
+        self.num_classes = num_classes
+    
+    def calculate_metrics(self, predictions, targets):
+        """Calculate accuracy, precision, recall, F1 score"""
+        all_preds = []
+        all_targets = []
         
-        # Convert targets to class labels
-        if target.size(0) > 0:
-            target_classes = target[:, 0].long()  # First column is class_id
-            all_targets.extend(target_classes.cpu().numpy())
-    
-    # Convert to numpy arrays
-    all_preds = np.array(all_preds)
-    all_targets = np.array(all_targets)
-    
-    # Handle empty predictions/targets
-    if len(all_preds) == 0 and len(all_targets) == 0:
-        return 1.0, 1.0, 1.0, 1.0  # Perfect score if no objects
-    elif len(all_preds) == 0 or len(all_targets) == 0:
-        return 0.0, 0.0, 0.0, 0.0  # Zero score if mismatch
-    
-    # Calculate metrics
-    try:
-        accuracy = accuracy_score(all_targets, all_preds)
-        precision = precision_score(all_targets, all_preds, average='weighted', zero_division=0)
-        recall = recall_score(all_targets, all_preds, average='weighted', zero_division=0)
-        f1 = f1_score(all_targets, all_preds, average='weighted', zero_division=0)
-    except:
-        # Fallback if metrics calculation fails
-        accuracy = precision = recall = f1 = 0.0
-    
-    return accuracy, precision, recall, f1
+        batch_size = predictions.size(0)
+        
+        for i in range(batch_size):
+            pred = predictions[i]  # [anchors, features]
+            target = targets[i]    # [num_objects, 5]
+            
+            # Extract class predictions from model output
+            # Model output format: [anchors, 5 + num_classes] where 5 = [x, y, w, h, obj_conf]
+            if pred.size(0) > 0 and pred.size(1) >= 5 + self.num_classes:
+                # Get class probabilities (last num_classes dimensions)
+                class_probs = pred[:, 5:5+self.num_classes]  # [anchors, num_classes]
+                
+                # Get predicted classes (argmax of class probabilities)
+                pred_classes = torch.argmax(class_probs, dim=1)  # [anchors]
+                
+                # Get objectness scores (4th dimension)
+                obj_scores = pred[:, 4]  # [anchors]
+                
+                # Filter predictions with high objectness (> 0.5)
+                valid_mask = obj_scores > 0.5
+                if valid_mask.sum() > 0:
+                    valid_preds = pred_classes[valid_mask]
+                    all_preds.extend(valid_preds.cpu().numpy())
+            
+            # Extract target classes
+            if len(target) > 0:
+                target_classes = target[:, 0].long()  # First column is class_id
+                all_targets.extend(target_classes.cpu().numpy())
+        
+        # Handle edge cases
+        if len(all_preds) == 0 and len(all_targets) == 0:
+            # No objects in dataset - perfect score
+            return 1.0, 1.0, 1.0, 1.0
+        elif len(all_preds) == 0 or len(all_targets) == 0:
+            # Mismatch - zero score
+            return 0.0, 0.0, 0.0, 0.0
+        
+        # Convert to numpy arrays
+        all_preds = np.array(all_preds)
+        all_targets = np.array(all_targets)
+        
+        # Calculate metrics
+        try:
+            accuracy = accuracy_score(all_targets, all_preds)
+        except:
+            accuracy = 0.0
+        
+        try:
+            precision = precision_score(all_targets, all_preds, average='weighted', zero_division=0)
+        except:
+            precision = 0.0
+        
+        try:
+            recall = recall_score(all_targets, all_preds, average='weighted', zero_division=0)
+        except:
+            recall = 0.0
+        
+        try:
+            f1 = f1_score(all_targets, all_preds, average='weighted', zero_division=0)
+        except:
+            f1 = 0.0
+        
+        return accuracy, precision, recall, f1
 
 class SimpleTrainer:
     """Simple trainer for robust training"""
@@ -263,6 +297,9 @@ class SimpleTrainer:
         
         # Loss function
         self.criterion = SimpleLoss(num_classes=4)
+        
+        # Metrics calculator
+        self.metrics_calculator = MetricsCalculator(num_classes=4)
         
         # Optimizer
         self.optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=0.0005)
@@ -279,8 +316,8 @@ class SimpleTrainer:
         self.val_precisions = []
         self.train_recalls = []
         self.val_recalls = []
-        self.train_f1s = []
-        self.val_f1s = []
+        self.train_f1_scores = []
+        self.val_f1_scores = []
         self.best_val_loss = float('inf')
         
     def train_epoch(self, train_loader):
@@ -300,10 +337,6 @@ class SimpleTrainer:
             predictions = self.model(images)
             loss, box_loss, cls_loss, obj_loss = self.criterion(predictions, targets)
             
-            # Store predictions and targets for metrics
-            all_predictions.extend([pred.cpu() for pred in predictions])
-            all_targets.extend(targets)
-            
             # Backward pass
             self.optimizer.zero_grad()
             loss.backward()
@@ -311,6 +344,10 @@ class SimpleTrainer:
             
             total_loss += loss.item()
             num_batches += 1
+            
+            # Store predictions and targets for metrics
+            all_predictions.append(predictions.detach().cpu())
+            all_targets.extend(targets)
             
             # Update progress bar
             progress_bar.set_postfix({
@@ -320,15 +357,19 @@ class SimpleTrainer:
                 'Obj': f'{obj_loss.item():.4f}'
             })
         
+        # Calculate metrics
+        if all_predictions:
+            all_predictions = torch.cat(all_predictions, dim=0)
+            accuracy, precision, recall, f1 = self.metrics_calculator.calculate_metrics(all_predictions, all_targets)
+        else:
+            accuracy, precision, recall, f1 = 0.0, 0.0, 0.0, 0.0
+        
         avg_loss = total_loss / num_batches if num_batches > 0 else 0
         self.train_losses.append(avg_loss)
-        
-        # Calculate metrics
-        accuracy, precision, recall, f1 = calculate_metrics(all_predictions, all_targets)
         self.train_accuracies.append(accuracy)
         self.train_precisions.append(precision)
         self.train_recalls.append(recall)
-        self.train_f1s.append(f1)
+        self.train_f1_scores.append(f1)
         
         return avg_loss, accuracy, precision, recall, f1
     
@@ -350,12 +391,12 @@ class SimpleTrainer:
                 predictions = self.model(images)
                 loss, box_loss, cls_loss, obj_loss = self.criterion(predictions, targets)
                 
-                # Store predictions and targets for metrics
-                all_predictions.extend([pred.cpu() for pred in predictions])
-                all_targets.extend(targets)
-                
                 total_loss += loss.item()
                 num_batches += 1
+                
+                # Store predictions and targets for metrics
+                all_predictions.append(predictions.cpu())
+                all_targets.extend(targets)
                 
                 # Update progress bar
                 progress_bar.set_postfix({
@@ -365,15 +406,19 @@ class SimpleTrainer:
                     'Obj': f'{obj_loss.item():.4f}'
                 })
         
+        # Calculate metrics
+        if all_predictions:
+            all_predictions = torch.cat(all_predictions, dim=0)
+            accuracy, precision, recall, f1 = self.metrics_calculator.calculate_metrics(all_predictions, all_targets)
+        else:
+            accuracy, precision, recall, f1 = 0.0, 0.0, 0.0, 0.0
+        
         avg_loss = total_loss / num_batches if num_batches > 0 else 0
         self.val_losses.append(avg_loss)
-        
-        # Calculate metrics
-        accuracy, precision, recall, f1 = calculate_metrics(all_predictions, all_targets)
         self.val_accuracies.append(accuracy)
         self.val_precisions.append(precision)
         self.val_recalls.append(recall)
-        self.val_f1s.append(f1)
+        self.val_f1_scores.append(f1)
         
         return avg_loss, accuracy, precision, recall, f1
     
@@ -388,27 +433,64 @@ class SimpleTrainer:
         
         best_model_path = save_dir / 'best_model.pth'
         
+        # Create CSV file for metrics logging
+        csv_path = save_dir / 'training_metrics.csv'
+        with open(csv_path, 'w', newline='') as csvfile:
+            fieldnames = ['epoch', 'train_loss', 'val_loss', 'train_acc', 'val_acc', 
+                         'train_precision', 'val_precision', 'train_recall', 'val_recall',
+                         'train_f1', 'val_f1', 'lr']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+        
         for epoch in range(epochs):
             print(f"\nEpoch {epoch+1}/{epochs}")
-            print("="*50)
+            print("="*60)
             
             # Training
-            train_loss, train_acc, train_prec, train_rec, train_f1 = self.train_epoch(train_loader)
+            train_loss, train_acc, train_precision, train_recall, train_f1 = self.train_epoch(train_loader)
             
             # Validation
-            val_loss, val_acc, val_prec, val_rec, val_f1 = self.validate_epoch(val_loader)
+            val_loss, val_acc, val_precision, val_recall, val_f1 = self.validate_epoch(val_loader)
             
             # Learning rate scheduling
             self.scheduler.step()
             current_lr = self.optimizer.param_groups[0]['lr']
             
-            # Print metrics
-            print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
-            print(f"Train Acc: {train_acc:.4f} | Val Acc: {val_acc:.4f}")
-            print(f"Train Prec: {train_prec:.4f} | Val Prec: {val_prec:.4f}")
-            print(f"Train Rec: {train_rec:.4f} | Val Rec: {val_rec:.4f}")
-            print(f"Train F1: {train_f1:.4f} | Val F1: {val_f1:.4f}")
-            print(f"Learning Rate: {current_lr:.6f}")
+            # Print comprehensive metrics
+            print(f"\n📊 EPOCH {epoch+1} RESULTS:")
+            print("="*60)
+            print(f"TRAINING METRICS:")
+            print(f"  Loss: {train_loss:.6f}")
+            print(f"  Accuracy: {train_acc:.6f}")
+            print(f"  Precision: {train_precision:.6f}")
+            print(f"  Recall: {train_recall:.6f}")
+            print(f"  F1-Score: {train_f1:.6f}")
+            print(f"\nVALIDATION METRICS:")
+            print(f"  Loss: {val_loss:.6f}")
+            print(f"  Accuracy: {val_acc:.6f}")
+            print(f"  Precision: {val_precision:.6f}")
+            print(f"  Recall: {val_recall:.6f}")
+            print(f"  F1-Score: {val_f1:.6f}")
+            print(f"\nLEARNING RATE: {current_lr:.6f}")
+            print("="*60)
+            
+            # Log to CSV
+            with open(csv_path, 'a', newline='') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writerow({
+                    'epoch': epoch + 1,
+                    'train_loss': train_loss,
+                    'val_loss': val_loss,
+                    'train_acc': train_acc,
+                    'val_acc': val_acc,
+                    'train_precision': train_precision,
+                    'val_precision': val_precision,
+                    'train_recall': train_recall,
+                    'val_recall': val_recall,
+                    'train_f1': train_f1,
+                    'val_f1': val_f1,
+                    'lr': current_lr
+                })
             
             # Save best model
             if val_loss < self.best_val_loss:
@@ -422,15 +504,15 @@ class SimpleTrainer:
                     'val_loss': val_loss,
                     'train_acc': train_acc,
                     'val_acc': val_acc,
-                    'train_prec': train_prec,
-                    'val_prec': val_prec,
-                    'train_rec': train_rec,
-                    'val_rec': val_rec,
+                    'train_precision': train_precision,
+                    'val_precision': val_precision,
+                    'train_recall': train_recall,
+                    'val_recall': val_recall,
                     'train_f1': train_f1,
                     'val_f1': val_f1,
                     'best_val_loss': self.best_val_loss,
                 }, best_model_path)
-                print(f"✅ New best model saved! Val Loss: {val_loss:.4f}")
+                print(f"✅ New best model saved! Val Loss: {val_loss:.4f}, Val F1: {val_f1:.4f}")
             
             # Save checkpoint every 5 epochs
             if (epoch + 1) % 5 == 0:
@@ -444,10 +526,10 @@ class SimpleTrainer:
                     'val_loss': val_loss,
                     'train_acc': train_acc,
                     'val_acc': val_acc,
-                    'train_prec': train_prec,
-                    'val_prec': val_prec,
-                    'train_rec': train_rec,
-                    'val_rec': val_rec,
+                    'train_precision': train_precision,
+                    'val_precision': val_precision,
+                    'train_recall': train_recall,
+                    'val_recall': val_recall,
                     'train_f1': train_f1,
                     'val_f1': val_f1,
                     'best_val_loss': self.best_val_loss,
@@ -465,10 +547,10 @@ class SimpleTrainer:
             'val_loss': val_loss,
             'train_acc': train_acc,
             'val_acc': val_acc,
-            'train_prec': train_prec,
-            'val_prec': val_prec,
-            'train_rec': train_rec,
-            'val_rec': val_rec,
+            'train_precision': train_precision,
+            'val_precision': val_precision,
+            'train_recall': train_recall,
+            'val_recall': val_recall,
             'train_f1': train_f1,
             'val_f1': val_f1,
             'best_val_loss': self.best_val_loss,
@@ -477,6 +559,7 @@ class SimpleTrainer:
         print(f"\n✅ Training completed!")
         print(f"Best validation loss: {self.best_val_loss:.4f}")
         print(f"Final model saved: {final_model_path}")
+        print(f"Metrics CSV saved: {csv_path}")
         
         return self.model
 
