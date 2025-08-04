@@ -139,9 +139,13 @@ class CustomLoss(nn.Module):
         
     def forward(self, predictions, targets):
         """
-        predictions: [batch, 3, H, W, 5+num_classes]
+        predictions: list of [batch, 3, H, W, 5+num_classes] tensors
         targets: list of [num_objects, 5] tensors
         """
+        # Handle list of predictions from model
+        if isinstance(predictions, list):
+            predictions = predictions[0]  # Take the first prediction tensor
+        
         total_loss = 0
         box_loss = 0
         cls_loss = 0
