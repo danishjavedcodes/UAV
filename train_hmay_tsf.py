@@ -24,7 +24,7 @@ import cv2
 from torch.utils.data import DataLoader, Dataset
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, OneCycleLR, ReduceLROnPlateau
-import torch.cuda.amp as amp
+import torch.amp as amp
 import math
 
 from hmay_tsf_model import HMAY_TSF, prepare_visdrone_dataset
