@@ -452,7 +452,7 @@ def main():
     # Create model
     print("Creating HMAY-TSF model based on methodology...")
     
-    # HMAY-TSF Architecture based on methodology.txt
+    # Simplified HMAY-TSF Architecture based on methodology.txt
     class HMAY_TSF_Model(nn.Module):
         def __init__(self, num_classes=4):
             super().__init__()
@@ -461,16 +461,13 @@ def main():
             # 1. Hybrid Multi-Scale Feature Extraction Module (HMS-FEM)
             self._setup_hybrid_multi_scale_extraction()
             
-            # 2. Temporal-Spatial Fusion Module (TSFM)
+            # 2. Temporal-Spatial Fusion Module (TSFM) - Simplified
             self._setup_temporal_spatial_fusion()
             
-            # 3. Adaptive Anchor Box Generation Module (AABGM)
-            self._setup_adaptive_anchor_boxes()
-            
-            # 4. Super-Resolution Data Augmentation (SRDA)
+            # 3. Super-Resolution Data Augmentation (SRDA) - Simplified
             self._setup_super_resolution()
             
-            # 5. Confluence-Based Occlusion Handling Module (COHM)
+            # 4. Confluence-Based Occlusion Handling Module (COHM) - Simplified
             self._setup_occlusion_handling()
             
             # Initialize weights
@@ -522,7 +519,7 @@ def main():
                 )
             ])
             
-            # Conditionally Parameterized Convolutions (CondConv)
+            # Conditionally Parameterized Convolutions (CondConv) - Simplified
             self.cond_conv = nn.ModuleList([
                 nn.Sequential(
                     nn.AdaptiveAvgPool2d(1),
@@ -554,7 +551,7 @@ def main():
                 )
             ])
             
-            # Spatial Pyramid Pooling with Cross-Stage Partial Connections (SPP-CSP)
+            # Spatial Pyramid Pooling with Cross-Stage Partial Connections (SPP-CSP) - Simplified
             self.spp_csp = nn.ModuleList([
                 self._create_spp_csp(64),
                 self._create_spp_csp(128),
@@ -562,11 +559,11 @@ def main():
                 self._create_spp_csp(512)
             ])
             
-            # Bidirectional Feature Pyramid Network (BiFPN)
+            # Bidirectional Feature Pyramid Network (BiFPN) - Simplified
             self.bifpn = self._create_bifpn()
         
         def _create_spp_csp(self, channels):
-            """Create SPP-CSP module"""
+            """Create simplified SPP-CSP module"""
             return nn.Sequential(
                 # Multi-scale pooling with concatenation
                 nn.ModuleList([
@@ -581,7 +578,7 @@ def main():
             )
         
         def _create_bifpn(self):
-            """Create Bidirectional Feature Pyramid Network"""
+            """Create simplified Bidirectional Feature Pyramid Network"""
             return nn.ModuleList([
                 # Bottom-up path
                 nn.Sequential(
@@ -618,20 +615,17 @@ def main():
             ])
         
         def _setup_temporal_spatial_fusion(self):
-            """2. Temporal-Spatial Fusion Module (TSFM)"""
+            """2. Temporal-Spatial Fusion Module (TSFM) - Simplified"""
             
-            # 3D Convolutional Neural Network for temporal features
-            self.temporal_3d_conv = nn.Sequential(
-                nn.Conv3d(512, 256, kernel_size=(3, 3, 3), padding=(1, 1, 1)),
-                nn.BatchNorm3d(256),
+            # Simplified temporal processing
+            self.temporal_conv = nn.Sequential(
+                nn.Conv2d(512, 256, 3, padding=1),
+                nn.BatchNorm2d(256),
                 nn.ReLU(inplace=True),
-                nn.Conv3d(256, 128, kernel_size=(3, 3, 3), padding=(1, 1, 1)),
-                nn.BatchNorm3d(128),
+                nn.Conv2d(256, 256, 3, padding=1),
+                nn.BatchNorm2d(256),
                 nn.ReLU(inplace=True)
             )
-            
-            # Gated Recurrent Unit for temporal fusion
-            self.gru = nn.GRU(128, 256, batch_first=True)
             
             # Spatial-temporal fusion
             self.spatial_temporal_fusion = nn.Sequential(
@@ -640,34 +634,15 @@ def main():
                 nn.ReLU(inplace=True)
             )
         
-        def _setup_adaptive_anchor_boxes(self):
-            """3. Adaptive Anchor Box Generation Module (AABGM)"""
-            
-            # Learnable anchor box parameters
-            self.anchor_scales = nn.Parameter(torch.tensor([0.1, 0.2, 0.4]))
-            self.anchor_ratios = nn.Parameter(torch.tensor([0.5, 1.0, 2.0]))
-            
-            # Anchor box refinement
-            self.anchor_refinement = nn.Sequential(
-                nn.Conv2d(512, 256, 3, padding=1),
-                nn.BatchNorm2d(256),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(256, 9, 1)  # 3 scales * 3 ratios
-            )
-        
         def _setup_super_resolution(self):
-            """4. Super-Resolution Data Augmentation (SRDA)"""
+            """4. Super-Resolution Data Augmentation (SRDA) - Simplified"""
             
-            # Dense Residual Super-Resolution Module
+            # Simplified super-resolution module
             self.sr_module = nn.Sequential(
-                # Dense connections
                 nn.Conv2d(512, 256, 3, padding=1),
                 nn.BatchNorm2d(256),
                 nn.ReLU(inplace=True),
-                nn.Conv2d(512, 256, 3, padding=1),  # Skip connection
-                nn.BatchNorm2d(256),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(512, 256, 3, padding=1),  # Skip connection
+                nn.Conv2d(256, 256, 3, padding=1),
                 nn.BatchNorm2d(256),
                 nn.ReLU(inplace=True),
                 # Upsampling
@@ -680,24 +655,21 @@ def main():
             )
         
         def _setup_occlusion_handling(self):
-            """5. Confluence-Based Occlusion Handling Module (COHM)"""
+            """5. Confluence-Based Occlusion Handling Module (COHM) - Simplified"""
             
-            # Feature attention mechanism
+            # Simplified feature attention mechanism
             self.feature_attention = nn.Sequential(
                 nn.AdaptiveAvgPool2d(1),
-                nn.Conv2d(512, 256, 1),
+                nn.Conv2d(64, 32, 1),
                 nn.ReLU(inplace=True),
-                nn.Conv2d(256, 512, 1),
+                nn.Conv2d(32, 64, 1),
                 nn.Sigmoid()
             )
             
-            # Densely Connected Bidirectional LSTM
-            self.occlusion_lstm = nn.LSTM(512, 256, bidirectional=True, batch_first=True)
-            
-            # Occlusion-aware feature fusion
+            # Simplified occlusion fusion
             self.occlusion_fusion = nn.Sequential(
-                nn.Conv2d(512 + 512, 512, 3, padding=1),
-                nn.BatchNorm2d(512),
+                nn.Conv2d(64 + 64, 64, 3, padding=1),
+                nn.BatchNorm2d(64),
                 nn.ReLU(inplace=True)
             )
         
@@ -716,7 +688,7 @@ def main():
                     nn.init.constant_(m.bias, 0)
         
         def forward(self, x):
-            """Complete HMAY-TSF forward pass"""
+            """Simplified HMAY-TSF forward pass"""
             batch_size = x.size(0)
             
             # 1. Hybrid Multi-Scale Feature Extraction
@@ -758,62 +730,22 @@ def main():
             # 2. BiFPN processing
             bifpn_features = self._apply_bifpn(features)
             
-            # 3. Temporal-Spatial Fusion (simplified for single frame)
-            # For single frame, we'll use spatial features as temporal
-            temporal_features = bifpn_features[-1].unsqueeze(2)  # Add time dimension
-            temporal_features = self.temporal_3d_conv(temporal_features)
-            temporal_features = temporal_features.squeeze(2)  # Remove time dimension
-            
-            # GRU processing (simplified for single frame)
-            # Reshape to match GRU input size (128 features)
-            B, C, H, W = temporal_features.shape
-            gru_input = temporal_features.view(B, C, H * W).permute(0, 2, 1)  # [B, H*W, C]
-            
-            # Ensure input size matches GRU expected size (128)
-            if gru_input.size(-1) != 128:
-                # Add a linear layer to project to correct size
-                if not hasattr(self, 'gru_projection'):
-                    self.gru_projection = nn.Linear(gru_input.size(-1), 128).to(gru_input.device)
-                gru_input = self.gru_projection(gru_input)
-            
-            gru_output, _ = self.gru(gru_input)
-            gru_features = gru_output.mean(dim=1)  # Average over sequence length
-            
-            # Reshape back to spatial dimensions, ensuring correct size
-            gru_output_size = gru_features.size(-1)  # Should be 256 (GRU hidden size)
-            gru_features = gru_features.view(B, gru_output_size, H, W)  # Reshape to spatial
+            # 3. Temporal-Spatial Fusion (simplified)
+            temporal_features = self.temporal_conv(bifpn_features[-1])
             
             # Spatial-temporal fusion
-            spatial_temporal = torch.cat([bifpn_features[-1], gru_features], dim=1)
+            spatial_temporal = torch.cat([bifpn_features[-1], temporal_features], dim=1)
             fused_features = self.spatial_temporal_fusion(spatial_temporal)
             
             # 4. Super-Resolution
             sr_features = self.sr_module(fused_features)
             
-            # 5. Occlusion Handling
+            # 5. Occlusion Handling (simplified)
             attention_weights = self.feature_attention(sr_features)
             attended_features = sr_features * attention_weights
             
-            # LSTM for occlusion handling (simplified)
-            B, C, H, W = attended_features.shape
-            lstm_input = attended_features.view(B, C, H * W).permute(0, 2, 1)  # [B, H*W, C]
-            
-            # Ensure input size matches LSTM expected size (512)
-            if lstm_input.size(-1) != 512:
-                # Add a linear layer to project to correct size
-                if not hasattr(self, 'lstm_projection'):
-                    self.lstm_projection = nn.Linear(lstm_input.size(-1), 512).to(lstm_input.device)
-                lstm_input = self.lstm_projection(lstm_input)
-            
-            lstm_output, _ = self.occlusion_lstm(lstm_input)
-            lstm_features = lstm_output.mean(dim=1)  # Average over sequence length
-            
-            # Reshape back to spatial dimensions, ensuring correct size
-            lstm_output_size = lstm_features.size(-1)  # Should be 512 (bidirectional LSTM)
-            lstm_features = lstm_features.view(B, lstm_output_size, H, W)  # Reshape to spatial
-            
             # Occlusion fusion
-            occlusion_fused = torch.cat([attended_features, lstm_features], dim=1)
+            occlusion_fused = torch.cat([attended_features, attended_features], dim=1)
             final_features = self.occlusion_fusion(occlusion_fused)
             
             # 6. Detection Head
@@ -822,7 +754,7 @@ def main():
             return detection_output
         
         def _apply_bifpn(self, features):
-            """Apply Bidirectional Feature Pyramid Network"""
+            """Apply simplified Bidirectional Feature Pyramid Network"""
             # Bottom-up path
             p4 = self.bifpn[0](features[3])  # 512 -> 256
             p3 = self.bifpn[1](features[2])  # 256 -> 128
@@ -867,10 +799,10 @@ def main():
     print("   - Spatial Pyramid Pooling with Cross-Stage Partial Connections (SPP-CSP)")
     print("   - Bidirectional Feature Pyramid Network (BiFPN)")
     print("   - Temporal-Spatial Fusion Module (TSFM)")
-    print("   - Adaptive Anchor Box Generation Module (AABGM)")
     print("   - Super-Resolution Data Augmentation (SRDA)")
     print("   - Confluence-Based Occlusion Handling Module (COHM)")
     print("✅ Pure PyTorch implementation - no YOLO dependency!")
+    print("✅ Simplified architecture for stable training!")
     
     # Resume from checkpoint if specified
     if args.resume:
