@@ -8,6 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from ultralytics import YOLO
 from ultralytics.nn.modules import Conv, C2f, SPPF, Detect
+from ultralytics.nn.modules import Concat
 import math
 
 class UltraOptimizedHMAY_TSF(nn.Module):
@@ -50,7 +51,37 @@ class UltraOptimizedHMAY_TSF(nn.Module):
         self.stride = torch.tensor([8, 16, 32])  # Strides for different scales
         
         # Add required YOLO compatibility attributes
-        self.yaml = {'nc': num_classes, 'names': self.names}  # Required by YOLO
+        self.yaml = {
+            'nc': num_classes,  # Number of classes
+            'names': self.names,  # Class names
+            'backbone': [
+                [-1, 1, Conv, [16, 3, 2]],  # 0-P1/2
+                [-1, 1, Conv, [32, 3, 2]],  # 1-P2/4
+                [-1, 1, C2f, [32, 1, True]],  # 2
+                [-1, 1, Conv, [64, 3, 2]],  # 3-P3/8
+                [-1, 2, C2f, [64, 2, True]],  # 4
+                [-1, 1, Conv, [128, 3, 2]],  # 5-P4/16
+                [-1, 2, C2f, [128, 2, True]],  # 6
+                [-1, 1, Conv, [256, 3, 2]],  # 7-P5/32
+                [-1, 1, C2f, [256, 1, True]],  # 8
+                [-1, 1, SPPF, [256, 5]],  # 9
+            ],
+            'head': [
+                [-1, 1, nn.Upsample, [None, 2, 'nearest']],
+                [[-1, 6], 1, Concat, [1]],  # cat backbone P4
+                [-1, 1, C2f, [128, 1]],  # 12
+                [-1, 1, nn.Upsample, [None, 2, 'nearest']],
+                [[-1, 4], 1, Concat, [1]],  # cat backbone P3
+                [-1, 1, C2f, [64, 1]],  # 15 (P3/8-small)
+                [-1, 1, Conv, [64, 3, 2]],
+                [[-1, 12], 1, Concat, [1]],  # cat head P4
+                [-1, 1, C2f, [128, 1]],  # 18 (P4/16-medium)
+                [-1, 1, Conv, [128, 3, 2]],
+                [[-1, 9], 1, Concat, [1]],  # cat head P5
+                [-1, 1, C2f, [256, 1]],  # 21 (P5/32-large)
+                [[15, 18, 21], 1, Detect, [num_classes, [64, 128, 256]]],  # Detect(P3, P4, P5)
+            ]
+        }  # Required by YOLO
         self.ckpt = None  # Checkpoint path
         self.cfg = None   # Configuration
         self.task = 'detect'  # Task type
