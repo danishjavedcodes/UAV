@@ -453,12 +453,65 @@ def main():
     
     # Create model
     print("Creating model...")
-    model = UltraOptimizedHMAY_TSF(
-        model_size='n',
-        num_classes=4,
-        pretrained=True,
-        use_yolov11=False
-    )
+    
+    # Use Option 2: SimpleHMAYTSF (no YOLO dependency, no downloads)
+    class SimpleHMAYTSF(nn.Module):
+        def __init__(self, num_classes=4):
+            super().__init__()
+            self.num_classes = num_classes
+            
+            # Simple backbone
+            self.backbone = nn.Sequential(
+                nn.Conv2d(3, 32, 3, padding=1),
+                nn.BatchNorm2d(32),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(32, 64, 3, stride=2, padding=1),
+                nn.BatchNorm2d(64),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(64, 128, 3, stride=2, padding=1),
+                nn.BatchNorm2d(128),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(128, 256, 3, stride=2, padding=1),
+                nn.BatchNorm2d(256),
+                nn.ReLU(inplace=True)
+            )
+            
+            # Detection head
+            self.detection_head = nn.Sequential(
+                nn.Conv2d(256, 128, 3, padding=1),
+                nn.BatchNorm2d(128),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(128, 3 * (5 + num_classes), 1)
+            )
+            
+            # Initialize weights
+            self._initialize_weights()
+        
+        def _initialize_weights(self):
+            for m in self.modules():
+                if isinstance(m, nn.Conv2d):
+                    nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                    if m.bias is not None:
+                        nn.init.constant_(m.bias, 0)
+                elif isinstance(m, nn.BatchNorm2d):
+                    nn.init.constant_(m.weight, 1)
+                    nn.init.constant_(m.bias, 0)
+        
+        def forward(self, x):
+            features = self.backbone(x)
+            output = self.detection_head(features)
+            
+            # Reshape to match expected format
+            B, C, H, W = output.shape
+            output = output.view(B, 3, 5 + self.num_classes, H, W)
+            output = output.permute(0, 1, 3, 4, 2).contiguous()
+            output = output.view(B, -1, 5 + self.num_classes)
+            
+            return [output]  # Return as list to match YOLO format
+    
+    model = SimpleHMAYTSF(num_classes=4)
+    print("✅ SimpleHMAYTSF model created successfully (Option 2)!")
+    print("✅ No YOLO dependency, no downloads, pure PyTorch implementation!")
     
     # Resume from checkpoint if specified
     if args.resume:

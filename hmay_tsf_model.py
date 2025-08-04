@@ -14,7 +14,7 @@ import math
 class UltraOptimizedHMAY_TSF(nn.Module):
     """Ultra-optimized HMAY-TSF model for 98%+ accuracy in <20 epochs"""
     
-    def __init__(self, model_size='n', num_classes=4, pretrained=True, use_yolov11=False):
+    def __init__(self, model_size='n', num_classes=4, pretrained=False, use_yolov11=False):
         super(UltraOptimizedHMAY_TSF, self).__init__()
         
         # Model configuration
@@ -346,7 +346,7 @@ ULTRA_OPTIMIZED_CONFIG = {
     # Model configuration
     'model_size': 'n',  # Use nano for faster training
     'num_classes': 4,
-    'pretrained': True,
+    'pretrained': False,
     'use_yolov11': False,  # Use YOLOv8 for stability
     
     # Training hyperparameters for 98%+ accuracy in <20 epochs
