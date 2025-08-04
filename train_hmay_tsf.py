@@ -404,7 +404,7 @@ class AdvancedHMAYTSFTrainer:
         print("Setting up Advanced HMAY-TSF model with YOLOv11...")
         
         # Use YOLOv11 instead of YOLOv8
-        model_name = f'yolov11{self.model_size}.pt' if pretrained else f'yolov11{self.model_size}.yaml'
+        model_name = f'yolov11{self.model_size}n.pt' if pretrained else f'yolov11{self.model_size}.yaml'
         
         try:
             # Load YOLOv11 model
