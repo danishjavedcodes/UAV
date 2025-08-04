@@ -845,170 +845,176 @@ class AdvancedHMAYTSFTrainer:
 
     def train_model(self, data_yaml, epochs=10, img_size=640, batch_size=8, 
                save_dir='./runs/train', patience=100, resume=False):
-    """Fixed training with proper YOLO integration for 98%+ performance"""
-    
-    print(f"Starting FIXED training for 98%+ performance:")
-    print(f"  Data: {data_yaml}")
-    print(f"  Epochs: {epochs} ")
-    print(f"  Image size: {img_size}")
-    print(f"  Batch size: {batch_size}")
-    print(f"  Device: {self.device}")
-    
-    # Create save directory and setup CSV logging
-    run_name = f'fixed_hmay_tsf_n_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
-    full_save_dir = Path(save_dir) / run_name
-    full_save_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Setup CSV logging
-    self.setup_csv_logging(full_save_dir)
-    
-    # Reset epoch counter for this training session
-    self.current_epoch = 0
+        print(f"Starting FIXED training for 98%+ performance:")
+        print(f"  Data: {data_yaml}")
+        print(f"  Epochs: {epochs} ")
+        print(f"  Image size: {img_size}")
+        print(f"  Batch size: {batch_size}")
+        print(f"  Device: {self.device}")
+        
+        # Create save directory and setup CSV logging
+        run_name = f'fixed_hmay_tsf_n_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
+        full_save_dir = Path(save_dir) / run_name
+        full_save_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Setup CSV logging
+        self.setup_csv_logging(full_save_dir)
+        
+        # Reset epoch counter for this training session
+        self.current_epoch = 0
 
-    # FIXED HYPERPARAMETERS FOR 98%+ PERFORMANCE
-    train_args = {
-        'data': data_yaml,
-        'epochs': epochs,
-        'imgsz': img_size,
-        'batch': batch_size,
-        'device': self.device,
-        'workers': 4,
-        'patience': patience,
-        'save': True,
-        'save_period': 1,
-        'cache': True,
-        'project': save_dir,
-        'name': run_name,
-        'exist_ok': True,
-        
-        # FIXED OPTIMIZER SETTINGS
-        'optimizer': 'SGD',  # Use SGD for better convergence
-        'lr0': 0.01,  # Higher initial learning rate
-        'lrf': 0.1,   # Higher final learning rate
-        'momentum': 0.937,
-        'weight_decay': 0.0005,  # Lower weight decay
-        'warmup_epochs': 3,  # Longer warmup
-        'warmup_momentum': 0.8,
-        'warmup_bias_lr': 0.1,
-        
-        # FIXED LOSS WEIGHTS
-        'box': 0.05,   # Lower box loss
-        'cls': 0.3,    # Lower classification weight
-        'dfl': 1.5,    # Standard DFL weight
-        
-        # FIXED AUGMENTATION
-        'hsv_h': 0.015,
-        'hsv_s': 0.7,
-        'hsv_v': 0.4,
-        'degrees': 0.0,   # No rotation for aerial images
-        'translate': 0.1,
-        'scale': 0.5,
-        'shear': 0.0,
-        'perspective': 0.0,
-        'flipud': 0.0,    # No vertical flip for aerial
-        'fliplr': 0.5,    # Keep horizontal flip
-        'mosaic': 0.0,    # No mosaic
-        'mixup': 0.0,     # No mixup
-        
-        # FIXED EVALUATION SETTINGS
-        'conf': 0.001,  # Lower confidence threshold
-        'iou': 0.6,
-        'max_det': 300,
-        
-        # FIXED FEATURES
-        'amp': True,
-        'overlap_mask': True,
-        'mask_ratio': 4,
-        'dropout': 0.0,
-        
-        # FIXED SCHEDULING
-        'cos_lr': False,  # Use linear scheduling
-        'close_mosaic': 0,
-        
-        # DEBUGGING
-        'verbose': True,
-        'plots': True,
-        'save_period': 1,
-    }
+        # FIXED HYPERPARAMETERS FOR 98%+ PERFORMANCE
+        train_args = {
+            'data': data_yaml,
+            'epochs': epochs,
+            'imgsz': img_size,
+            'batch': batch_size,
+            'device': self.device,
+            'workers': 4,
+            'patience': patience,
+            'save': True,
+            'save_period': 1,
+            'cache': True,
+            'project': save_dir,
+            'name': run_name,
+            'exist_ok': True,
+            
+            # FIXED OPTIMIZER SETTINGS
+            'optimizer': 'SGD',  # Use SGD for better convergence
+            'lr0': 0.01,  # Higher initial learning rate
+            'lrf': 0.1,   # Higher final learning rate
+            'momentum': 0.937,
+            'weight_decay': 0.0005,  # Lower weight decay
+            'warmup_epochs': 3,  # Longer warmup
+            'warmup_momentum': 0.8,
+            'warmup_bias_lr': 0.1,
+            
+            # FIXED LOSS WEIGHTS
+            'box': 0.05,   # Lower box loss
+            'cls': 0.3,    # Lower classification weight
+            'dfl': 1.5,    # Standard DFL weight
+            
+            # FIXED AUGMENTATION
+            'hsv_h': 0.015,
+            'hsv_s': 0.7,
+            'hsv_v': 0.4,
+            'degrees': 0.0,   # No rotation for aerial images
+            'translate': 0.1,
+            'scale': 0.5,
+            'shear': 0.0,
+            'perspective': 0.0,
+            'flipud': 0.0,    # No vertical flip for aerial
+            'fliplr': 0.5,    # Keep horizontal flip
+            'mosaic': 0.0,    # No mosaic
+            'mixup': 0.0,     # No mixup
+            
+            # FIXED EVALUATION SETTINGS
+            'conf': 0.001,  # Lower confidence threshold
+            'iou': 0.6,
+            'max_det': 300,
+            
+            # FIXED FEATURES
+            'amp': True,
+            'overlap_mask': True,
+            'mask_ratio': 4,
+            'dropout': 0.0,
+            
+            # FIXED SCHEDULING
+            'cos_lr': False,  # Use linear scheduling
+            'close_mosaic': 0,
+            
+            # DEBUGGING
+            'verbose': True,
+            'plots': True,
+            'save_period': 1,
+        }
 
-    # Use the base YOLO model directly for training
-    print("Using base YOLO model for training...")
-    
-    # Add callbacks to the base YOLO model
-    self.base_yolo.add_callback('on_val_end', self.on_epoch_end)
-    self.base_yolo.add_callback('on_train_epoch_end', self.on_train_epoch_end)
+        # Use the base YOLO model directly for training
+        print("Using base YOLO model for training...")
+        
+        # Add callbacks to the base YOLO model
+        self.base_yolo.add_callback('on_val_end', self.on_epoch_end)
+        self.base_yolo.add_callback('on_train_epoch_end', self.on_train_epoch_end)
 
-    # Start training with the base YOLO model
-    try:
-        results = self.base_yolo.train(**train_args)
-        
-        # Save training summary
-        self.save_advanced_training_summary(full_save_dir, results)
-        
-        return results
-        
-    except Exception as e:
-        print(f"Training error: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
-
-    def on_epoch_end(self, trainer):
-        """Fixed callback with proper learning rate extraction"""
+        # Start training with the base YOLO model
         try:
-            # Update curriculum learning
-            self.curriculum_learning.update_epoch(self.current_epoch)
-            self.current_epoch += 1
-            epoch = self.current_epoch
+            results = self.base_yolo.train(**train_args)
             
-            # Initialize metrics dictionary
-            metrics = {}
-            metrics['epoch'] = epoch
+            # Save training summary
+            self.save_advanced_training_summary(full_save_dir, results)
             
-            # Get REAL metrics from actual training
-            if hasattr(trainer, 'metrics') and trainer.metrics is not None:
-                det_metrics = trainer.metrics
+            return results
+            
+        except Exception as e:
+            print(f"Training error: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+        def on_epoch_end(self, trainer):
+            """Fixed callback with proper learning rate extraction"""
+            try:
+                # Update curriculum learning
+                self.curriculum_learning.update_epoch(self.current_epoch)
+                self.current_epoch += 1
+                epoch = self.current_epoch
                 
-                if hasattr(det_metrics, 'box') and det_metrics.box is not None:
-                    box_metrics = det_metrics.box
+                # Initialize metrics dictionary
+                metrics = {}
+                metrics['epoch'] = epoch
+                
+                # Get REAL metrics from actual training
+                if hasattr(trainer, 'metrics') and trainer.metrics is not None:
+                    det_metrics = trainer.metrics
                     
-                    # Extract ACTUAL metrics
-                    try:
-                        # Get real precision and recall
-                        if hasattr(box_metrics, 'mp') and box_metrics.mp is not None:
-                            metrics['val_precision'] = float(box_metrics.mp)
-                        else:
-                            metrics['val_precision'] = 0.0
-                            
-                        if hasattr(box_metrics, 'mr') and box_metrics.mr is not None:
-                            metrics['val_recall'] = float(box_metrics.mr)
-                        else:
-                            metrics['val_recall'] = 0.0
-                            
-                        # Get real mAP values
-                        if hasattr(box_metrics, 'map50') and box_metrics.map50 is not None:
-                            metrics['map50'] = float(box_metrics.map50)
-                        else:
-                            metrics['map50'] = 0.0
-                            
-                        if hasattr(box_metrics, 'map') and box_metrics.map is not None:
-                            metrics['map50_95'] = float(box_metrics.map)
-                        else:
-                            metrics['map50_95'] = 0.0
-                    
-                        # Calculate real F1 score
-                        precision = metrics['val_precision']
-                        recall = metrics['val_recall']
-                        if precision + recall > 0:
-                            metrics['val_f1'] = 2 * (precision * recall) / (precision + recall)
-                        else:
-                            metrics['val_f1'] = 0.0
-                    
-                        # Calculate real accuracy
-                        metrics['val_accuracy'] = (precision + recall) / 2
+                    if hasattr(det_metrics, 'box') and det_metrics.box is not None:
+                        box_metrics = det_metrics.box
                         
-                    except (ValueError, TypeError) as e:
-                        print(f"Warning: Error extracting real metrics: {e}")
+                        # Extract ACTUAL metrics
+                        try:
+                            # Get real precision and recall
+                            if hasattr(box_metrics, 'mp') and box_metrics.mp is not None:
+                                metrics['val_precision'] = float(box_metrics.mp)
+                            else:
+                                metrics['val_precision'] = 0.0
+                                
+                            if hasattr(box_metrics, 'mr') and box_metrics.mr is not None:
+                                metrics['val_recall'] = float(box_metrics.mr)
+                            else:
+                                metrics['val_recall'] = 0.0
+                                
+                            # Get real mAP values
+                            if hasattr(box_metrics, 'map50') and box_metrics.map50 is not None:
+                                metrics['map50'] = float(box_metrics.map50)
+                            else:
+                                metrics['map50'] = 0.0
+                                
+                            if hasattr(box_metrics, 'map') and box_metrics.map is not None:
+                                metrics['map50_95'] = float(box_metrics.map)
+                            else:
+                                metrics['map50_95'] = 0.0
+                        
+                            # Calculate real F1 score
+                            precision = metrics['val_precision']
+                            recall = metrics['val_recall']
+                            if precision + recall > 0:
+                                metrics['val_f1'] = 2 * (precision * recall) / (precision + recall)
+                            else:
+                                metrics['val_f1'] = 0.0
+                        
+                            # Calculate real accuracy
+                            metrics['val_accuracy'] = (precision + recall) / 2
+                            
+                        except (ValueError, TypeError) as e:
+                            print(f"Warning: Error extracting real metrics: {e}")
+                            metrics['val_precision'] = 0.0
+                            metrics['val_recall'] = 0.0
+                            metrics['map50'] = 0.0
+                            metrics['map50_95'] = 0.0
+                            metrics['val_f1'] = 0.0
+                            metrics['val_accuracy'] = 0.0
+                    else:
+                        print("Warning: No box metrics available")
                         metrics['val_precision'] = 0.0
                         metrics['val_recall'] = 0.0
                         metrics['map50'] = 0.0
@@ -1016,104 +1022,96 @@ class AdvancedHMAYTSFTrainer:
                         metrics['val_f1'] = 0.0
                         metrics['val_accuracy'] = 0.0
                 else:
-                    print("Warning: No box metrics available")
+                    print("Warning: No trainer metrics available")
                     metrics['val_precision'] = 0.0
                     metrics['val_recall'] = 0.0
                     metrics['map50'] = 0.0
                     metrics['map50_95'] = 0.0
                     metrics['val_f1'] = 0.0
                     metrics['val_accuracy'] = 0.0
-            else:
-                print("Warning: No trainer metrics available")
-                metrics['val_precision'] = 0.0
-                metrics['val_recall'] = 0.0
-                metrics['map50'] = 0.0
-                metrics['map50_95'] = 0.0
-                metrics['val_f1'] = 0.0
-                metrics['val_accuracy'] = 0.0
-        
-            # FIXED: Get REAL learning rate properly
-            try:
-                if hasattr(trainer, 'optimizer') and trainer.optimizer is not None:
-                    current_lr = trainer.optimizer.param_groups[0]['lr']
-                    if isinstance(current_lr, torch.Tensor):
-                        metrics['lr'] = float(current_lr.item())
+            
+                # FIXED: Get REAL learning rate properly
+                try:
+                    if hasattr(trainer, 'optimizer') and trainer.optimizer is not None:
+                        current_lr = trainer.optimizer.param_groups[0]['lr']
+                        if isinstance(current_lr, torch.Tensor):
+                            metrics['lr'] = float(current_lr.item())
+                        else:
+                            metrics['lr'] = float(current_lr)
                     else:
-                        metrics['lr'] = float(current_lr)
-                else:
-                    # Use a default learning rate if not accessible
+                        # Use a default learning rate if not accessible
+                        metrics['lr'] = 0.01  # Default learning rate
+                except Exception as e:
+                    print(f"Warning: Error extracting learning rate: {e}")
                     metrics['lr'] = 0.01  # Default learning rate
-            except Exception as e:
-                print(f"Warning: Error extracting learning rate: {e}")
-                metrics['lr'] = 0.01  # Default learning rate
-        
-            # Get REAL loss values
-            if hasattr(trainer, 'loss') and trainer.loss is not None:
-                if isinstance(trainer.loss, torch.Tensor):
-                    if trainer.loss.numel() == 1:
-                        metrics['train_loss'] = float(trainer.loss.item())
+            
+                # Get REAL loss values
+                if hasattr(trainer, 'loss') and trainer.loss is not None:
+                    if isinstance(trainer.loss, torch.Tensor):
+                        if trainer.loss.numel() == 1:
+                            metrics['train_loss'] = float(trainer.loss.item())
+                        else:
+                            metrics['train_loss'] = float(trainer.loss.mean().item())
                     else:
-                        metrics['train_loss'] = float(trainer.loss.mean().item())
+                        metrics['train_loss'] = float(trainer.loss)
                 else:
-                    metrics['train_loss'] = float(trainer.loss)
-            else:
-                metrics['train_loss'] = 0.0
+                    metrics['train_loss'] = 0.0
+                    
+                if hasattr(trainer, 'val_loss') and trainer.val_loss is not None:
+                    if isinstance(trainer.val_loss, torch.Tensor):
+                        if trainer.val_loss.numel() == 1:
+                            metrics['val_loss'] = float(trainer.val_loss.item())
+                        else:
+                            metrics['val_loss'] = float(trainer.val_loss.mean().item())
+                    else:
+                        metrics['val_loss'] = float(trainer.val_loss)
+                else:
+                    metrics['val_loss'] = 0.0
+            
+                # Set training metrics to validation metrics
+                metrics['train_precision'] = metrics['val_precision']
+                metrics['train_recall'] = metrics['val_recall']
+                metrics['train_f1'] = metrics['val_f1']
+                metrics['train_accuracy'] = metrics['val_accuracy']
                 
-            if hasattr(trainer, 'val_loss') and trainer.val_loss is not None:
-                if isinstance(trainer.val_loss, torch.Tensor):
-                    if trainer.val_loss.numel() == 1:
-                        metrics['val_loss'] = float(trainer.val_loss.item())
-                    else:
-                        metrics['val_loss'] = float(trainer.val_loss.mean().item())
-                else:
-                    metrics['val_loss'] = float(trainer.val_loss)
-            else:
-                metrics['val_loss'] = 0.0
-        
-            # Set training metrics to validation metrics
-            metrics['train_precision'] = metrics['val_precision']
-            metrics['train_recall'] = metrics['val_recall']
-            metrics['train_f1'] = metrics['val_f1']
-            metrics['train_accuracy'] = metrics['val_accuracy']
-            
-            # Set other metrics to 0
-            metrics['focal_loss'] = 0.0
-            metrics['iou_loss'] = 0.0
-            metrics['box_loss'] = 0.0
-            metrics['small_object_recall'] = 0.0
-            metrics['occlusion_aware_f1'] = 0.0
-            metrics['gradient_norm'] = 0.0
-            
-            # Get curriculum learning info
-            stage = self.curriculum_learning.get_current_stage()
-            metrics['curriculum_stage'] = stage['difficulty']
-            metrics['augmentation_strength'] = stage['augmentation_strength']
-            
-            # Log to CSV
-            self.log_metrics_to_csv(metrics)
-            
-            # Print REAL metrics
-            self.print_epoch_metrics(metrics)
-            
-            # Update best metrics
-            if metrics['val_f1'] > self.best_map:
-                self.best_map = metrics['val_f1']
-                self.best_metrics = metrics.copy()
-                print(f"🎯 NEW BEST F1-SCORE: {self.best_map:.6f}")
-            
-            # Print realistic progress message
-            print(f"\n📊 Epoch {epoch} - Real Performance:")
-            print(f"   Precision: {metrics['val_precision']:.6f}")
-            print(f"   Recall: {metrics['val_recall']:.6f}")
-            print(f"   F1-Score: {metrics['val_f1']:.6f}")
-            print(f"   mAP@0.5: {metrics['map50']:.6f}")
-            print(f"   mAP@0.5:0.95: {metrics['map50_95']:.6f}")
-            print(f"   Learning Rate: {metrics['lr']:.6f}")
-            
-        except Exception as e:
-            print(f"Error in epoch callback: {e}")
-            import traceback
-            traceback.print_exc()
+                # Set other metrics to 0
+                metrics['focal_loss'] = 0.0
+                metrics['iou_loss'] = 0.0
+                metrics['box_loss'] = 0.0
+                metrics['small_object_recall'] = 0.0
+                metrics['occlusion_aware_f1'] = 0.0
+                metrics['gradient_norm'] = 0.0
+                
+                # Get curriculum learning info
+                stage = self.curriculum_learning.get_current_stage()
+                metrics['curriculum_stage'] = stage['difficulty']
+                metrics['augmentation_strength'] = stage['augmentation_strength']
+                
+                # Log to CSV
+                self.log_metrics_to_csv(metrics)
+                
+                # Print REAL metrics
+                self.print_epoch_metrics(metrics)
+                
+                # Update best metrics
+                if metrics['val_f1'] > self.best_map:
+                    self.best_map = metrics['val_f1']
+                    self.best_metrics = metrics.copy()
+                    print(f"🎯 NEW BEST F1-SCORE: {self.best_map:.6f}")
+                
+                # Print realistic progress message
+                print(f"\n📊 Epoch {epoch} - Real Performance:")
+                print(f"   Precision: {metrics['val_precision']:.6f}")
+                print(f"   Recall: {metrics['val_recall']:.6f}")
+                print(f"   F1-Score: {metrics['val_f1']:.6f}")
+                print(f"   mAP@0.5: {metrics['map50']:.6f}")
+                print(f"   mAP@0.5:0.95: {metrics['map50_95']:.6f}")
+                print(f"   Learning Rate: {metrics['lr']:.6f}")
+                
+            except Exception as e:
+                print(f"Error in epoch callback: {e}")
+                import traceback
+                traceback.print_exc()
     
     def on_train_epoch_end(self, trainer):
         """Advanced callback for training epoch end"""
