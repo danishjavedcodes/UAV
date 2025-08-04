@@ -276,7 +276,7 @@ class CustomTrainer:
             images = images.to(self.device)
             
             # Forward pass
-            with amp.autocast():
+            with amp.autocast(device_type='cuda' if torch.cuda.is_available() else 'cpu'):
                 predictions = self.model(images)
                 loss, box_loss, cls_loss, obj_loss = self.criterion(predictions, targets)
             
@@ -315,7 +315,7 @@ class CustomTrainer:
                 images = images.to(self.device)
                 
                 # Forward pass
-                with amp.autocast():
+                with amp.autocast(device_type='cuda' if torch.cuda.is_available() else 'cpu'):
                     predictions = self.model(images)
                     loss, box_loss, cls_loss, obj_loss = self.criterion(predictions, targets)
                 
