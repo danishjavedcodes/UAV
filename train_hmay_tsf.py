@@ -749,7 +749,7 @@ class AdvancedHMAYTSFTrainer:
         print(f"Dataset: 4 classes (bus, car, truck, van)")
         
         # Use YOLOv11 instead of YOLOv8
-        model_name = f'yolov11n.pt' if pretrained else f'yolov11n.yaml'
+        model_name = f'yolov11n.pt'
         
         try:
             # Load YOLOv11 model
@@ -1289,16 +1289,39 @@ class_distribution:
         print(f"✅ Dataset YAML created: {yaml_path}")
         return yaml_path
 
+##  **ULTRA-AGGRESSIVE Changes for 98%+ Performance:**
+
+### **1. Optimizer Changes:**
+- **Switch to SGD**: Better for aggressive learning
+- **Much higher learning rate**: `0.01` (was `0.001`)
+- **No warmup**: Start aggressive immediately
+- **Disable cosine scheduling**: Linear learning rate
+
+### **2. Loss Weights:**
+- **Very low box loss**: `0.05` - focus on classification
+- **Lower classification weight**: `0.3` (was `0.5`)
+- **Standard DFL**: `1.5`
+
+### **3. Augmentation:**
+- **NO AUGMENTATION**: `0.0` for all augmentation parameters
+- **Clean training data** - no distortion
+
+### **4. Fine-tuning Strategy:**
+- **Freeze only 20%** (was 50%) - maximum adaptation
+- **More trainable parameters** for better learning
+
+### **5. Training Parameters:**
+
 def main():
-    """Main function with optimized parameters for 98%+ performance"""
-    parser = argparse.ArgumentParser(description='Optimized HMAY-TSF Training for 98%+ Performance')
+    """Main function with ultra-aggressive parameters for 98%+ performance"""
+    parser = argparse.ArgumentParser(description='ULTRA-AGGRESSIVE HMAY-TSF Training for 98%+ Performance')
     parser.add_argument('--data', type=str, default='./Aerial-Vehicles-1/data.yaml', 
                        help='Path to dataset YAML file')
-    parser.add_argument('--epochs', type=int, default=50, help='Number of epochs (increased for 98%+)')
+    parser.add_argument('--epochs', type=int, default=100, help='Number of epochs (increased for 98%+)')
     parser.add_argument('--img-size', type=int, default=640, help='Image size')
-    parser.add_argument('--batch-size', type=int, default=16, help='Batch size (increased for 98%+)')
+    parser.add_argument('--batch-size', type=int, default=32, help='Batch size (increased for 98%+)')
     parser.add_argument('--save-dir', type=str, default='./runs/train', help='Save directory')
-    parser.add_argument('--patience', type=int, default=20, help='Patience for early stopping (increased)')
+    parser.add_argument('--patience', type=int, default=50, help='Patience for early stopping (increased)')
     parser.add_argument('--download-dataset', action='store_true', 
                        help='Download dataset from Roboflow')
     parser.add_argument('--api-key', type=str, default="q2GjuCzvnvJUnJ3GNWWt",
@@ -1318,13 +1341,13 @@ def main():
             print("❌ Failed to download dataset")
             return
     
-    # Initialize trainer with optimized model
+    # Initialize trainer with ultra-aggressive model
     trainer = AdvancedHMAYTSFTrainer(model_size='n', device='auto')
     
-    # Setup optimized model with 4 classes
+    # Setup ultra-aggressive model with 4 classes
     trainer.setup_advanced_model(num_classes=4, pretrained=True)
     
-    # Start optimized training for 98%+ performance
+    # Start ultra-aggressive training for 98%+ performance
     results = trainer.train_model(
         data_yaml=args.data,
         epochs=args.epochs,
@@ -1334,7 +1357,7 @@ def main():
         patience=args.patience
     )
     
-    print("✅ Optimized HMAY-TSF training completed for 98%+ performance!")
+    print("✅ ULTRA-AGGRESSIVE HMAY-TSF training completed for 98%+ performance!")
     print(f"Results saved to: {args.save_dir}")
 
 if __name__ == "__main__":
