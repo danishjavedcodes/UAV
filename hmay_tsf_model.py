@@ -44,6 +44,11 @@ class UltraOptimizedHMAY_TSF(nn.Module):
         # Setup aggressive fine-tuning for fast convergence
         self._setup_aggressive_fine_tuning()
         
+        # Add YOLO compatibility attributes
+        self.nc = num_classes  # Number of classes
+        self.names = ['bus', 'car', 'truck', 'van']  # Class names
+        self.stride = torch.tensor([8, 16, 32])  # Strides for different scales
+        
     def _setup_ultra_optimized_components(self):
         """Setup ultra-optimized components for fast convergence"""
         
@@ -102,7 +107,7 @@ class UltraOptimizedHMAY_TSF(nn.Module):
             nn.Conv2d(128, 64, 3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(inplace=True),
-            nn.Conv2d(64, self.num_classes * 5, 1)  # 5 = 4 bbox coords + 1 confidence
+            nn.Conv2d(64, 3 * (5 + self.num_classes), 1)  # 3 anchors * (4 bbox coords + 1 confidence + num_classes)
         )
         
         # Initialize weights for fast convergence
@@ -157,9 +162,23 @@ class UltraOptimizedHMAY_TSF(nn.Module):
         
     def forward(self, x):
         """Ultra-optimized forward pass - properly integrated with YOLO training"""
-        # For training, we need to return the same format as YOLO expects
-        # This ensures compatibility with YOLO's training loop
-        return self.base_yolo.model(x)
+        # For training, we need to use our enhanced components
+        # Extract YOLO features first
+        yolo_features = self._extract_yolo_features(x)
+        
+        # Apply ultra-optimized components
+        enhanced_features = self._apply_ultra_optimized_components(yolo_features)
+        
+        # Apply detection head
+        output = self.detection_head(enhanced_features)
+        
+        # Return in YOLO-compatible format
+        # YOLO expects a list of tensors for multi-scale detection
+        if isinstance(output, torch.Tensor):
+            # Convert single tensor to list format
+            return [output]
+        else:
+            return output
     
     def predict(self, x):
         """Enhanced prediction with HMAY-TSF components"""
@@ -175,64 +194,53 @@ class UltraOptimizedHMAY_TSF(nn.Module):
         return output
     
     def _extract_yolo_features(self, x):
-        """Extract features from YOLO backbone - FIXED"""
-        # Get YOLO output
-        with torch.no_grad():  # Freeze during feature extraction
-            yolo_output = self.base_yolo.model(x)
-            
-            # Handle different output types
-            if isinstance(yolo_output, (list, tuple)):
-                # Use the first element if it's a list/tuple
-                features = yolo_output[0] if len(yolo_output) > 0 else x
-            else:
-                # Use directly if it's a tensor
-                features = yolo_output
-            
-            # FIXED: Proper tensor handling
-            if isinstance(features, torch.Tensor):
-                # Check if it's already in the right format
-                if features.dim() == 4:  # [batch, channels, height, width]
-                    # Already in spatial format, ensure 256 channels
-                    if features.size(1) != 256:
-                        if features.size(1) < 256:
-                            # Pad with zeros
-                            B, C, H, W = features.shape
-                            padded = torch.zeros(B, 256, H, W, device=features.device)
-                            padded[:, :C, :, :] = features
-                            features = padded
-                        else:
-                            # Take first 256 channels
-                            features = features[:, :256, :, :]
-                elif features.dim() == 3:  # [batch, num_detections, features]
-                    # Convert detection output to spatial format
-                    B, N, C = features.shape
-                    # Use a reasonable spatial size
-                    H = W = 20  # Fixed size for simplicity
-                    features = features.view(B, C, H, W)
-                    # Ensure 256 channels
-                    if C != 256:
-                        if C < 256:
-                            padded = torch.zeros(B, 256, H, W, device=features.device)
-                            padded[:, :C, :, :] = features
-                            features = padded
-                        else:
-                            features = features[:, :256, :, :]
-                elif features.dim() == 2:  # [batch, features]
-                    # Convert to spatial format
-                    B, C = features.shape
-                    H = W = int(math.sqrt(C)) if C > 0 else 20
-                    features = features.view(B, 1, H, W)
-                    features = features.repeat(1, 256, 1, 1)  # Expand to 256 channels
-                else:
-                    # Fallback: create a default tensor
-                    B = x.size(0)
-                    features = torch.zeros(B, 256, 20, 20, device=x.device)
-            else:
-                # Fallback to input
-                B = x.size(0)
-                features = torch.zeros(B, 256, 20, 20, device=x.device)
+        """Extract features from YOLO backbone - FIXED for training"""
+        # Get intermediate features from YOLO backbone
+        features = []
         
-        return features
+        # Forward through base model layers to get intermediate features
+        current_x = x
+        
+        # Go through the YOLO model layers to extract features
+        for i, layer in enumerate(self.base_yolo.model):
+            current_x = layer(current_x)
+            
+            # Extract features at specific layers (similar to YOLO's feature extraction)
+            if i in [8, 12, 21]:  # SPPF, C2f, and detection layers
+                features.append(current_x)
+        
+        # If we don't have enough features, use the last one
+        if len(features) == 0:
+            features = [current_x]
+        
+        # Use the largest feature map (usually the last one)
+        main_feature = features[-1]
+        
+        # Ensure correct format
+        if isinstance(main_feature, torch.Tensor):
+            # Check if it's already in the right format
+            if main_feature.dim() == 4:  # [batch, channels, height, width]
+                # Already in spatial format, ensure 256 channels
+                if main_feature.size(1) != 256:
+                    if main_feature.size(1) < 256:
+                        # Pad with zeros
+                        B, C, H, W = main_feature.shape
+                        padded = torch.zeros(B, 256, H, W, device=main_feature.device)
+                        padded[:, :C, :, :] = main_feature
+                        main_feature = padded
+                    else:
+                        # Take first 256 channels
+                        main_feature = main_feature[:, :256, :, :]
+            else:
+                # Convert to spatial format
+                B = main_feature.size(0)
+                main_feature = torch.zeros(B, 256, 20, 20, device=main_feature.device)
+        else:
+            # Fallback: create a default tensor
+            B = x.size(0)
+            main_feature = torch.zeros(B, 256, 20, 20, device=x.device)
+        
+        return main_feature
     
     def _apply_ultra_optimized_components(self, features):
         """Apply ultra-optimized components to features"""
