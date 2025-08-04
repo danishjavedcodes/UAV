@@ -778,7 +778,10 @@ def main():
             
             gru_output, _ = self.gru(gru_input)
             gru_features = gru_output.mean(dim=1)  # Average over sequence length
-            gru_features = gru_features.view(B, 256, H, W)  # Reshape back to spatial
+            
+            # Reshape back to spatial dimensions, ensuring correct size
+            gru_output_size = gru_features.size(-1)  # Should be 256 (GRU hidden size)
+            gru_features = gru_features.view(B, gru_output_size, H, W)  # Reshape to spatial
             
             # Spatial-temporal fusion
             spatial_temporal = torch.cat([bifpn_features[-1], gru_features], dim=1)
@@ -804,7 +807,10 @@ def main():
             
             lstm_output, _ = self.occlusion_lstm(lstm_input)
             lstm_features = lstm_output.mean(dim=1)  # Average over sequence length
-            lstm_features = lstm_features.view(B, 512, H, W)  # Reshape back to spatial
+            
+            # Reshape back to spatial dimensions, ensuring correct size
+            lstm_output_size = lstm_features.size(-1)  # Should be 512 (bidirectional LSTM)
+            lstm_features = lstm_features.view(B, lstm_output_size, H, W)  # Reshape to spatial
             
             # Occlusion fusion
             occlusion_fused = torch.cat([attended_features, lstm_features], dim=1)
