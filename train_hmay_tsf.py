@@ -26,6 +26,17 @@ import torch.nn.functional as F
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts, OneCycleLR, ReduceLROnPlateau
 import torch.amp as amp
 import math
+import requests
+import urllib.request
+from tqdm import tqdm
+import hashlib
+
+try:
+    from roboflow import Roboflow
+    ROBOFLOW_AVAILABLE = True
+except ImportError:
+    print("⚠️  Roboflow not available. Install with: pip install roboflow")
+    ROBOFLOW_AVAILABLE = False
 
 from hmay_tsf_model import HMAY_TSF, prepare_visdrone_dataset
 from data_preparation import prepare_visdrone_dataset as prep_dataset, get_dataloader
@@ -291,6 +302,9 @@ class AdvancedHMAYTSFTrainer:
         self.best_map = 0.0
         self.best_metrics = {}
         
+        # Initialize dataset downloader
+        self.dataset_downloader = DatasetDownloader()
+        
         # Advanced loss functions
         self.focal_loss = AdvancedFocalLoss(alpha=1, gamma=2, label_smoothing=0.1)
         self.iou_loss = AdvancedIoULoss(iou_type='ciou')
@@ -399,9 +413,10 @@ class AdvancedHMAYTSFTrainer:
         # Store metrics for potential analysis
         self.training_metrics.append(metrics_dict)
     
-    def setup_advanced_model(self, num_classes=11, pretrained=True):
+    def setup_advanced_model(self, num_classes=4, pretrained=True):  # Changed from 11 to 4
         """Setup the advanced HMAY-TSF model with YOLOv11 and fine-tuning approach"""
         print("Setting up Advanced HMAY-TSF model with YOLOv11...")
+        print(f"Dataset: 4 classes (bus, car, truck, van)")
         
         # Use YOLOv11 instead of YOLOv8
         model_name = f'yolov11n.pt' if pretrained else f'yolov11n.yaml'
@@ -417,7 +432,7 @@ class AdvancedHMAYTSFTrainer:
             self.model = YOLO(model_name)
         
         # Advanced model configuration
-        self.model.model.model[-1].nc = num_classes  # Update number of classes
+        self.model.model.model[-1].nc = num_classes  # Update number of classes to 4
         
         # Advanced weight initialization
         self._initialize_advanced_weights()
@@ -890,31 +905,178 @@ class AdvancedHMAYTSFTrainer:
         
         return results
 
+class ModelDownloader:
+    """Advanced model downloader for YOLO models"""
+    
+    def __init__(self):
+        self.model_urls = {
+            'yolov11n': 'https://github.com/ultralytics/assets/releases/download/v11.0.0/yolov11n.pt',
+            'yolov11s': 'https://github.com/ultralytics/assets/releases/download/v11.0.0/yolov11s.pt',
+            'yolov11m': 'https://github.com/ultralytics/assets/releases/download/v11.0.0/yolov11m.pt',
+            'yolov11l': 'https://github.com/ultralytics/assets/releases/download/v11.0.0/yolov11l.pt',
+            'yolov11x': 'https://github.com/ultralytics/assets/releases/download/v11.0.0/yolov11x.pt',
+            'yolov8n': 'https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt',
+        }
+        self.download_dir = Path('./models')
+        self.download_dir.mkdir(parents=True, exist_ok=True)
+    
+    def download_model(self, model_name):
+        """Download a YOLO model from Ultralytics assets."""
+        if model_name not in self.model_urls:
+            print(f"Model '{model_name}' not found in available models.")
+            return False
+        
+        model_path = self.download_dir / model_name
+        
+        if model_path.exists():
+            print(f"Model '{model_name}' already exists at {model_path}. Skipping download.")
+            return True
+        
+        print(f"Downloading {model_name} from {self.model_urls[model_name]} to {model_path}...")
+        
+        try:
+            urllib.request.urlretrieve(self.model_urls[model_name], model_path, reporthook=self._download_progress)
+            print(f"✅ Model '{model_name}' downloaded successfully to {model_path}")
+            return True
+        except Exception as e:
+            print(f"❌ Error downloading {model_name}: {e}")
+            return False
+    
+    def _download_progress(self, count, block_size, total_size):
+        """Progress bar for model downloads."""
+        if total_size == 0:
+            print("Downloading...")
+            return
+        
+        downloaded = count * block_size
+        percentage = min(downloaded * 100 / total_size, 100)
+        print(f"\rDownloading: {percentage:.1f}%", end="")
+
+class DatasetDownloader:
+    """Advanced dataset downloader for Roboflow aerial vehicles dataset"""
+    
+    def __init__(self, api_key="q2GjuCzvnvJUnJ3GNWWt"):
+        self.api_key = api_key
+        self.class_names = ['bus', 'car', 'truck', 'van']  # Updated for 4 classes
+        self.num_classes = 4  # Updated for 4 classes
+        
+        if not ROBOFLOW_AVAILABLE:
+            print("❌ Roboflow not available. Install with: pip install roboflow")
+            return
+            
+        try:
+            self.rf = Roboflow(api_key=api_key)
+            print("✅ Roboflow initialized successfully!")
+        except Exception as e:
+            print(f"❌ Error initializing Roboflow: {e}")
+    
+    def download_dataset(self, workspace="uavdt", project_name="aerial-vehicles-hjarh", 
+                        version_num=1, format_type="yolov11", dataset_path="./dataset"):
+        """Download dataset from Roboflow"""
+        if not ROBOFLOW_AVAILABLE:
+            print("❌ Roboflow not available")
+            return None
+            
+        try:
+            print(f"📥 Downloading dataset from Roboflow...")
+            print(f"  Workspace: {workspace}")
+            print(f"  Project: {project_name}")
+            print(f"  Version: {version_num}")
+            print(f"  Format: {format_type}")
+            print(f"  Classes: {self.class_names}")
+            
+            # Download dataset
+            project = self.rf.workspace(workspace).project(project_name)
+            version = project.version(version_num)
+            dataset = version.download(format_type)
+            
+            # Create dataset YAML
+            yaml_path = self._create_dataset_yaml(dataset, dataset_path)
+            
+            print(f"✅ Dataset downloaded successfully!")
+            print(f"  Dataset path: {dataset.location}")
+            print(f"  YAML path: {yaml_path}")
+            print(f"  Classes: {self.class_names}")
+            print(f"  Number of classes: {self.num_classes}")
+            
+            return yaml_path
+            
+        except Exception as e:
+            print(f"❌ Error downloading dataset: {e}")
+            return None
+    
+    def _create_dataset_yaml(self, dataset, dataset_path):
+        """Create dataset YAML file for the 4-class dataset"""
+        yaml_content = f"""# Dataset configuration for aerial vehicles (4 classes)
+# Classes: bus, car, truck, van
+
+path: {dataset.location}  # Dataset root directory
+train: images/train  # Train images (relative to 'path')
+val: images/val      # Val images (relative to 'path')
+test: images/test    # Test images (relative to 'path')
+
+# Classes
+nc: {self.num_classes}  # Number of classes
+names: {self.class_names}  # Class names
+
+# Dataset information
+dataset_name: aerial-vehicles-hjarh
+dataset_version: 1
+dataset_format: yolov11
+total_classes: {self.num_classes}
+class_distribution:
+  bus: 0
+  car: 0
+  truck: 0
+  van: 0
+"""
+        
+        # Save YAML file
+        yaml_path = os.path.join(dataset_path, "dataset.yaml")
+        os.makedirs(dataset_path, exist_ok=True)
+        
+        with open(yaml_path, 'w') as f:
+            f.write(yaml_content)
+        
+        print(f"✅ Dataset YAML created: {yaml_path}")
+        return yaml_path
+
 def main():
-    """Main function for advanced training"""
-    parser = argparse.ArgumentParser(description='Advanced HMAY-TSF Training')
-    parser.add_argument('--data', type=str, default='./dataset/dataset.yaml', help='Dataset YAML file')
+    """Main function with updated dataset configuration"""
+    parser = argparse.ArgumentParser(description='Advanced HMAY-TSF Training with 4-class dataset')
+    parser.add_argument('--data', type=str, default='./dataset/dataset.yaml', 
+                       help='Path to dataset YAML file')
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs')
-    parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
     parser.add_argument('--img-size', type=int, default=640, help='Image size')
-    parser.add_argument('--model-size', type=str, default='s', help='Model size (n, s, m, l, x)')
-    parser.add_argument('--device', type=str, default='auto', help='Device to use')
+    parser.add_argument('--batch-size', type=int, default=8, help='Batch size')
     parser.add_argument('--save-dir', type=str, default='./runs/train', help='Save directory')
-    parser.add_argument('--patience', type=int, default=100, help='Early stopping patience')
+    parser.add_argument('--patience', type=int, default=10, help='Patience for early stopping')
+    parser.add_argument('--download-dataset', action='store_true', 
+                       help='Download dataset from Roboflow')
+    parser.add_argument('--api-key', type=str, default="q2GjuCzvnvJUnJ3GNWWt",
+                       help='Roboflow API key')
     
     args = parser.parse_args()
     
-    # Initialize advanced trainer
-    trainer = AdvancedHMAYTSFTrainer(
-        model_size='n',
-        device=args.device,
-        project_name='HMAY-TSF-Advanced-99.2-Percent'
-    )
+    # Download dataset if requested
+    if args.download_dataset:
+        print("📥 Downloading dataset from Roboflow...")
+        downloader = DatasetDownloader(api_key=args.api_key)
+        yaml_path = downloader.download_dataset()
+        if yaml_path:
+            args.data = yaml_path
+            print(f"✅ Dataset downloaded and configured: {yaml_path}")
+        else:
+            print("❌ Failed to download dataset")
+            return
     
-    # Setup advanced model with YOLOv11
-    trainer.setup_advanced_model(num_classes=11, pretrained=True)
+    # Initialize trainer with 4-class configuration
+    trainer = AdvancedHMAYTSFTrainer(model_size='n', device='auto')
     
-    # Start advanced training with YOLOv11 fine-tuning
+    # Setup advanced model with 4 classes
+    trainer.setup_advanced_model(num_classes=4, pretrained=True)  # Updated for 4 classes
+    
+    # Start advanced training
     results = trainer.train_model(
         data_yaml=args.data,
         epochs=args.epochs,
@@ -924,11 +1086,8 @@ def main():
         patience=args.patience
     )
     
-    if results:
-        print("Advanced training completed successfully!")
-        print(f"Best F1-Score achieved: {trainer.best_map:.6f}")
-    else:
-        print("Advanced training failed!")
+    print("✅ Training completed successfully!")
+    print(f"Results saved to: {args.save_dir}")
 
 if __name__ == "__main__":
     main() 

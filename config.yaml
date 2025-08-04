@@ -1,13 +1,21 @@
 # Advanced HMAY-TSF Configuration with YOLOv11
 # Target: Fine-tuning approach with YOLOv11 and extra trainable layers
+# Dataset: 4 classes (bus, car, truck, van)
 
 # Model Configuration
 model:
   version: 'yolov11'  # Use YOLOv11 instead of YOLOv8
   size: 's'  # Model size (n, s, m, l, x)
-  num_classes: 11
+  num_classes: 4  # Updated for 4 classes: bus, car, truck, van
   use_yolov11: true
   fallback_to_yolov8: true  # Fallback to YOLOv8 if YOLOv11 not available
+  
+  # Class names for the new dataset
+  class_names:
+    - bus
+    - car
+    - truck
+    - van
 
 # Fine-tuning Configuration
 fine_tuning:
