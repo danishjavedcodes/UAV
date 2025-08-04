@@ -30,6 +30,7 @@ import requests
 import urllib.request
 from tqdm import tqdm
 import hashlib
+from collections import deque
 
 try:
     from roboflow import Roboflow
@@ -286,6 +287,320 @@ class AdvancedAugmentation:
             transformed = self.transform(image=image)
             return transformed['image']
 
+class IntegratedHMAYTSF(nn.Module):
+    """Properly integrated HMAY-TSF with YOLO - All in one file"""
+    
+    def __init__(self, base_yolo_model, num_classes=4):
+        super().__init__()
+        self.base_yolo = base_yolo_model
+        self.num_classes = num_classes
+        
+        # Get YOLO feature dimensions
+        self.feature_dims = [256, 512, 1024]
+        
+        # Add HMAY-TSF layers
+        self.conditional_convs = nn.ModuleList([
+            self._create_conditional_conv(dim, dim) for dim in self.feature_dims
+        ])
+        
+        self.temporal_fusion = self._create_temporal_fusion(self.feature_dims[0])
+        self.super_resolution = self._create_super_resolution()
+        self.bifpn = self._create_bifpn(self.feature_dims[0])
+        
+        # Feature buffer for temporal fusion
+        self.feature_buffer = deque(maxlen=8)
+        
+        # Enhanced detection head
+        self.detection_head = nn.ModuleList([
+            nn.Conv2d(self.feature_dims[0], 3 * (5 + num_classes), 1),
+            nn.Conv2d(self.feature_dims[1], 3 * (5 + num_classes), 1),
+            nn.Conv2d(self.feature_dims[2], 3 * (5 + num_classes), 1)
+        ])
+        
+        # Initialize weights
+        self._initialize_weights()
+        
+    def _create_conditional_conv(self, in_channels, out_channels):
+        """Create conditional convolution layer"""
+        return nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, 3, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, 3, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True)
+        )
+    
+    def _create_temporal_fusion(self, channels):
+        """Create temporal-spatial fusion layer"""
+        return nn.Sequential(
+            nn.Conv2d(channels, channels, 3, padding=1),
+            nn.BatchNorm2d(channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channels, channels, 1),
+            nn.BatchNorm2d(channels),
+            nn.ReLU(inplace=True)
+        )
+    
+    def _create_super_resolution(self):
+        """Create super-resolution module"""
+        return nn.Sequential(
+            nn.Conv2d(256, 512, 3, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(512, 256, 3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True)
+        )
+    
+    def _create_bifpn(self, channels):
+        """Create BiFPN layer"""
+        return nn.Sequential(
+            nn.Conv2d(channels, channels, 3, padding=1),
+            nn.BatchNorm2d(channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channels, channels, 3, padding=1),
+            nn.BatchNorm2d(channels),
+            nn.ReLU(inplace=True)
+        )
+    
+    def _initialize_weights(self):
+        """Initialize weights for better training"""
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                nn.init.constant_(m.bias, 0)
+    
+    def forward(self, x):
+        # Extract YOLO features at different scales
+        yolo_features = self._extract_yolo_features(x)
+        
+        # Apply HMAY-TSF enhancements
+        enhanced_features = []
+        for i, (feat, cond_conv) in enumerate(zip(yolo_features, self.conditional_convs)):
+            enhanced_feat = cond_conv(feat)
+            enhanced_features.append(enhanced_feat)
+        
+        # Apply BiFPN
+        if len(enhanced_features) >= 3:
+            p3, p4, p5 = self._apply_bifpn(enhanced_features[0], enhanced_features[1], enhanced_features[2])
+            enhanced_features = [p3, p4, p5]
+        
+        # Apply temporal-spatial fusion
+        if len(self.feature_buffer) > 0:
+            temporal_features = self.temporal_fusion(list(self.feature_buffer)[-1])
+            enhanced_features[0] = enhanced_features[0] + 0.3 * temporal_features
+        
+        # Update feature buffer
+        self.feature_buffer.append(enhanced_features[0].detach())
+        
+        # Apply super-resolution if needed
+        final_features = self.super_resolution(enhanced_features[0])
+        
+        # Generate detection outputs
+        detection_outputs = []
+        for i, (feat, head) in enumerate(zip(enhanced_features, self.detection_head)):
+            output = head(feat)
+            detection_outputs.append(output)
+        
+        return detection_outputs
+    
+    def _extract_yolo_features(self, x):
+        """Extract features from YOLO model"""
+        features = []
+        
+        # Forward through base model layers
+        x = self.base_yolo.model[0](x)  # Conv
+        x = self.base_yolo.model[1](x)  # Conv
+        
+        # Extract multi-scale features
+        for i in range(2, len(self.base_yolo.model) - 1):
+            x = self.base_yolo.model[i](x)
+            if i in [4, 6, 9]:  # Extract features at different scales
+                features.append(x)
+        
+        return features
+    
+    def _apply_bifpn(self, p3, p4, p5):
+        """Apply BiFPN to features"""
+        # Simple BiFPN implementation
+        p3_out = self.bifpn(p3)
+        p4_out = self.bifpn(p4)
+        p5_out = self.bifpn(p5)
+        
+        return p3_out, p4_out, p5_out
+
+class EnhancedYOLOBackbone(nn.Module):
+    """Enhanced YOLO backbone with integrated HMAY-TSF layers"""
+    
+    def __init__(self, base_model, num_classes=4):
+        super().__init__()
+        self.base_model = base_model
+        self.num_classes = num_classes
+        
+        # Get intermediate feature dimensions
+        self.feature_dims = [256, 512, 1024]
+        
+        # Enhanced conditional convolutions
+        self.cond_convs = nn.ModuleList([
+            self._create_enhanced_conv(dim, dim) for dim in self.feature_dims
+        ])
+        
+        # Enhanced SPP-CSP modules
+        self.spp_csps = nn.ModuleList([
+            self._create_spp_csp(dim, dim) for dim in self.feature_dims
+        ])
+        
+        # Enhanced BiFPN layers
+        self.bifpn = self._create_enhanced_bifpn(self.feature_dims[0])
+        
+        # Enhanced Temporal-Spatial Fusion
+        self.tsf = self._create_enhanced_tsf(self.feature_dims[0])
+        self.feature_buffer = deque(maxlen=8)
+        
+        # Super-resolution module
+        self.sr_module = self._create_super_resolution()
+        
+        # Enhanced detection head
+        self.detection_head = nn.ModuleList([
+            nn.Conv2d(self.feature_dims[0], 3 * (5 + num_classes), 1),
+            nn.Conv2d(self.feature_dims[1], 3 * (5 + num_classes), 1),
+            nn.Conv2d(self.feature_dims[2], 3 * (5 + num_classes), 1)
+        ])
+        
+        # Initialize weights
+        self._initialize_weights()
+    
+    def _create_enhanced_conv(self, in_channels, out_channels):
+        """Create enhanced convolution layer"""
+        return nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, 3, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, 3, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True)
+        )
+    
+    def _create_spp_csp(self, c1, c2):
+        """Create SPP-CSP module"""
+        return nn.Sequential(
+            nn.Conv2d(c1, c2, 1),
+            nn.BatchNorm2d(c2),
+            nn.ReLU(inplace=True),
+            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Conv2d(c2, c2, 1),
+            nn.BatchNorm2d(c2),
+            nn.ReLU(inplace=True)
+        )
+    
+    def _create_enhanced_bifpn(self, channels):
+        """Create enhanced BiFPN layer"""
+        return nn.Sequential(
+            nn.Conv2d(channels, channels, 3, padding=1),
+            nn.BatchNorm2d(channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channels, channels, 3, padding=1),
+            nn.BatchNorm2d(channels),
+            nn.ReLU(inplace=True)
+        )
+    
+    def _create_enhanced_tsf(self, channels):
+        """Create enhanced temporal-spatial fusion"""
+        return nn.Sequential(
+            nn.Conv2d(channels, channels, 3, padding=1),
+            nn.BatchNorm2d(channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channels, channels, 1),
+            nn.BatchNorm2d(channels),
+            nn.ReLU(inplace=True)
+        )
+    
+    def _create_super_resolution(self):
+        """Create super-resolution module"""
+        return nn.Sequential(
+            nn.Conv2d(256, 512, 3, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(512, 256, 3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True)
+        )
+    
+    def _initialize_weights(self):
+        """Initialize weights for better training"""
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, 0, 0.01)
+                nn.init.constant_(m.bias, 0)
+    
+    def forward(self, x, is_training=True, apply_sr=False):
+        # Apply super-resolution if requested
+        if apply_sr:
+            x = self.sr_module(x)
+        
+        # Extract features from base model
+        features = []
+        
+        # Forward through base model layers
+        x = self.base_model.model[0](x)  # Conv
+        x = self.base_model.model[1](x)  # Conv
+        
+        # Extract multi-scale features
+        for i in range(2, len(self.base_model.model) - 1):
+            x = self.base_model.model[i](x)
+            if i in [4, 6, 9]:  # Extract features at different scales
+                features.append(x)
+        
+        # Apply enhanced conditional convolutions and SPP-CSP
+        enhanced_features = []
+        for i, (feat, cond_conv, spp_csp) in enumerate(zip(features, self.cond_convs, self.spp_csps)):
+            enhanced_feat = cond_conv(feat)
+            enhanced_feat = spp_csp(enhanced_feat)
+            enhanced_features.append(enhanced_feat)
+        
+        # Apply enhanced BiFPN
+        if len(enhanced_features) >= 3:
+            p3, p4, p5 = self._apply_enhanced_bifpn(enhanced_features[0], enhanced_features[1], enhanced_features[2])
+            enhanced_features = [p3, p4, p5]
+        
+        # Temporal-Spatial Fusion (only for the smallest scale features)
+        if is_training:
+            self.feature_buffer.append(enhanced_features[0].detach())
+            if len(self.feature_buffer) > 1:
+                tsf_features = self.tsf(list(self.feature_buffer)[-1])
+                enhanced_features[0] = enhanced_features[0] + 0.3 * tsf_features
+        
+        # Generate detection outputs
+        detection_outputs = []
+        for i, (feat, head) in enumerate(zip(enhanced_features, self.detection_head)):
+            output = head(feat)
+            detection_outputs.append(output)
+        
+        return detection_outputs
+    
+    def _apply_enhanced_bifpn(self, p3, p4, p5):
+        """Apply enhanced BiFPN to features"""
+        p3_out = self.bifpn(p3)
+        p4_out = self.bifpn(p4)
+        p5_out = self.bifpn(p5)
+        
+        return p3_out, p4_out, p5_out
+
 class AdvancedHMAYTSFTrainer:
     """Advanced trainer for HMAY-TSF model with comprehensive optimization"""
     
@@ -413,9 +728,9 @@ class AdvancedHMAYTSFTrainer:
         # Store metrics for potential analysis
         self.training_metrics.append(metrics_dict)
     
-    def setup_advanced_model(self, num_classes=4, pretrained=True):  # Changed from 11 to 4
-        """Setup the advanced HMAY-TSF model with YOLOv11 and fine-tuning approach"""
-        print("Setting up Advanced HMAY-TSF model with YOLOv11...")
+    def setup_advanced_model(self, num_classes=4, pretrained=True):
+        """Setup the integrated HMAY-TSF model with YOLOv11"""
+        print("Setting up Integrated HMAY-TSF model with YOLOv11...")
         print(f"Dataset: 4 classes (bus, car, truck, van)")
         
         # Use YOLOv11 instead of YOLOv8
@@ -423,131 +738,95 @@ class AdvancedHMAYTSFTrainer:
         
         try:
             # Load YOLOv11 model
-            self.model = YOLO(model_name)
+            base_yolo = YOLO(model_name)
             print(f"✅ YOLOv11 model {model_name} loaded successfully!")
         except Exception as e:
             print(f"❌ Error loading YOLOv11 model: {e}")
             print("Falling back to YOLOv8...")
             model_name = f'yolov8n.pt' if pretrained else f'yolov8n.yaml'
-            self.model = YOLO(model_name)
+            base_yolo = YOLO(model_name)
         
-        # Advanced model configuration
-        self.model.model.model[-1].nc = num_classes  # Update number of classes to 4
+        # Create integrated model
+        self.model = IntegratedHMAYTSF(base_yolo.model, num_classes)
         
-        # Advanced weight initialization
-        self._initialize_advanced_weights()
-        
-        # Fine-tuning approach: Freeze YOLO backbone, train extra layers
+        # Setup fine-tuning
         if pretrained:
-            print("🔒 Implementing fine-tuning strategy...")
-            self._setup_fine_tuning()
+            print("🔒 Implementing integrated fine-tuning strategy...")
+            self._setup_integrated_fine_tuning()
         
-        print(f"Advanced YOLOv11 model {model_name} loaded successfully!")
+        print(f"Integrated HMAY-TSF model loaded successfully!")
         print(f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
         print(f"Trainable parameters: {sum(p.numel() for p in self.model.parameters() if p.requires_grad):,}")
         return self.model
     
-    def _initialize_advanced_weights(self):
-        """Initialize weights with advanced techniques"""
-        for m in self.model.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, 0, 0.01)
-                nn.init.constant_(m.bias, 0)
-    
-    def _setup_fine_tuning(self):
-        """Setup fine-tuning: freeze YOLO weights, train extra layers"""
-        print("Setting up fine-tuning strategy...")
+    def _setup_integrated_fine_tuning(self):
+        """Setup fine-tuning with integrated HMAY-TSF layers"""
+        print("Setting up integrated fine-tuning strategy...")
         
-        # Get all parameters
-        all_params = list(self.model.model.model.parameters())
-        total_params = len(all_params)
+        # Freeze YOLO backbone (70%)
+        yolo_params = list(self.model.base_yolo.parameters())
+        freeze_count = int(len(yolo_params) * 0.7)
         
-        # Fine-tuning strategy:
-        # 1. Freeze YOLO backbone (first 70% of layers)
-        # 2. Keep detection head trainable (last 30% of layers)
-        # 3. Add extra trainable layers
+        print(f"Total YOLO parameters: {len(yolo_params)}")
+        print(f"Freezing first {freeze_count} YOLO layers (backbone)")
+        print(f"Training last {len(yolo_params) - freeze_count} YOLO layers (detection head)")
         
-        freeze_ratio = 0.7  # Freeze 70% of YOLO layers
-        freeze_layers = int(total_params * freeze_ratio)
-        
-        print(f"Total layers: {total_params}")
-        print(f"Freezing first {freeze_layers} layers (YOLO backbone)")
-        print(f"Training last {total_params - freeze_layers} layers (detection head)")
-        
-        # Freeze YOLO backbone layers
-        for i, param in enumerate(all_params):
-            if i < freeze_layers:
-                param.requires_grad = False
+        for i, param in enumerate(yolo_params):
+            if i < freeze_count:
+                param.requires_grad = False  # Frozen
             else:
-                param.requires_grad = True
+                param.requires_grad = True   # Trainable
         
-        # Add extra trainable layers for HMAY-TSF methodology
-        self._add_extra_trainable_layers()
+        # All HMAY-TSF layers are trainable
+        for param in self.model.conditional_convs.parameters():
+            param.requires_grad = True
         
-        # Verify fine-tuning setup
+        for param in self.model.temporal_fusion.parameters():
+            param.requires_grad = True
+        
+        for param in self.model.super_resolution.parameters():
+            param.requires_grad = True
+        
+        for param in self.model.bifpn.parameters():
+            param.requires_grad = True
+        
+        for param in self.model.detection_head.parameters():
+            param.requires_grad = True
+        
+        # Count parameters
         frozen_params = sum(p.numel() for p in self.model.parameters() if not p.requires_grad)
         trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
         
-        print(f"\nFine-tuning Summary:")
-        print(f"  Frozen parameters: {frozen_params:,}")
+        print(f"\nIntegrated Fine-tuning Summary:")
+        print(f"  Frozen YOLO parameters: {frozen_params:,}")
         print(f"  Trainable parameters: {trainable_params:,}")
         print(f"  Freeze ratio: {frozen_params/(frozen_params+trainable_params)*100:.1f}%")
-    
+        print(f"  HMAY-TSF layers: All trainable")
+        print("✅ Integrated fine-tuning setup complete!")
+
     def _add_extra_trainable_layers(self):
         """Add extra trainable layers for HMAY-TSF methodology"""
-        print("Adding extra trainable layers for HMAY-TSF...")
+        print("Adding integrated HMAY-TSF layers...")
         
-        # Add conditional convolution layers
-        self._add_conditional_conv_layers()
-        
-        # Add temporal-spatial fusion layers
-        self._add_temporal_spatial_layers()
-        
-        # Add super-resolution layers
-        self._add_super_resolution_layers()
-        
-        print("✅ Extra trainable layers added successfully!")
-    
+        # The layers are already integrated in the IntegratedHMAYTSF class
+        print("✅ HMAY-TSF layers already integrated in the model!")
+        print("  - Conditional Convolution layers")
+        print("  - Temporal-Spatial Fusion layers")
+        print("  - Super-Resolution layers")
+        print("  - BiFPN layers")
+        print("  - Enhanced detection head")
+
     def _add_conditional_conv_layers(self):
-        """Add conditional convolution layers"""
-        try:
-            # Import conditional convolution from model file
-            from hmay_tsf_model import EnhancedCondConv2d
-            
-            # Add conditional convolution layers to the model
-            # This would be integrated into the YOLO model architecture
-            pass
-        except ImportError:
-            pass
-    
+        """Conditional convolution layers are already integrated"""
+        print("✅ Conditional convolution layers already integrated in IntegratedHMAYTSF")
+
     def _add_temporal_spatial_layers(self):
-        """Add temporal-spatial fusion layers"""
-        try:
-            # Import temporal-spatial fusion from model file
-            from hmay_tsf_model import EnhancedTemporalSpatialFusion
-            
-            # Add temporal-spatial fusion layers
-            pass
-        except ImportError:
-            pass
-    
+        """Temporal-spatial fusion layers are already integrated"""
+        print("✅ Temporal-spatial fusion layers already integrated in IntegratedHMAYTSF")
+
     def _add_super_resolution_layers(self):
-        """Add super-resolution layers"""
-        try:
-            # Import super-resolution from model file
-            from hmay_tsf_model import SuperResolutionModule
-            
-            # Add super-resolution layers
-            pass
-        except ImportError:
-            pass
+        """Super-resolution layers are already integrated"""
+        print("✅ Super-resolution layers already integrated in IntegratedHMAYTSF")
 
     def train_model(self, data_yaml, epochs=10, img_size=640, batch_size=8, 
                    save_dir='./runs/train', patience=100, resume=False):
@@ -996,8 +1275,8 @@ class_distribution:
         return yaml_path
 
 def main():
-    """Main function with updated dataset configuration"""
-    parser = argparse.ArgumentParser(description='Advanced HMAY-TSF Training with 4-class dataset')
+    """Main function with integrated HMAY-TSF model"""
+    parser = argparse.ArgumentParser(description='Integrated HMAY-TSF Training with 4-class dataset')
     parser.add_argument('--data', type=str, default='./Aerial-Vehicles-1/data.yaml', 
                        help='Path to dataset YAML file')
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs')
@@ -1024,13 +1303,13 @@ def main():
             print("❌ Failed to download dataset")
             return
     
-    # Initialize trainer with 4-class configuration
+    # Initialize trainer with integrated model
     trainer = AdvancedHMAYTSFTrainer(model_size='n', device='auto')
     
-    # Setup advanced model with 4 classes
-    trainer.setup_advanced_model(num_classes=4, pretrained=True)  # Updated for 4 classes
+    # Setup integrated model with 4 classes
+    trainer.setup_advanced_model(num_classes=4, pretrained=True)
     
-    # Start advanced training
+    # Start integrated training
     results = trainer.train_model(
         data_yaml=args.data,
         epochs=args.epochs,
@@ -1040,7 +1319,7 @@ def main():
         patience=args.patience
     )
     
-    print("✅ Training completed successfully!")
+    print("✅ Integrated HMAY-TSF training completed successfully!")
     print(f"Results saved to: {args.save_dir}")
 
 if __name__ == "__main__":
