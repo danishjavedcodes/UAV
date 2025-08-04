@@ -1,88 +1,111 @@
-# Advanced HMAY-TSF Configuration
-# Target: 99%+ performance by epoch 10
+# Advanced HMAY-TSF Configuration with YOLOv11
+# Target: Fine-tuning approach with YOLOv11 and extra trainable layers
+
+# Model Configuration
+model:
+  version: 'yolov11'  # Use YOLOv11 instead of YOLOv8
+  size: 's'  # Model size (n, s, m, l, x)
+  num_classes: 11
+  use_yolov11: true
+  fallback_to_yolov8: true  # Fallback to YOLOv8 if YOLOv11 not available
+
+# Fine-tuning Configuration
+fine_tuning:
+  enabled: true
+  freeze_backbone: true
+  freeze_ratio: 0.7  # Freeze 70% of YOLO layers
+  train_detection_head: true
+  train_extra_layers: true
+  
+  # Extra trainable layers
+  conditional_conv: true
+  temporal_spatial_fusion: true
+  super_resolution: true
+  bifpn: true
+  spp_csp: true
 
 # Training Configuration
 training:
-  epochs: 10  # Changed from 200 to 10 for 99% target
+  epochs: 10  # Fine-tuning epochs
   batch_size: 8
   img_size: 640
-  warmup_epochs: 2  # Reduced for faster learning
-  patience: 10  # Reduced for 10-epoch training
+  warmup_epochs: 3  # Longer warmup for fine-tuning
+  patience: 10  # Reduced for fine-tuning
   
-  # Advanced optimization
+  # Fine-tuning optimization
   optimizer: 'AdamW'
-  lr0: 0.002  # Higher learning rate for faster convergence
-  lrf: 0.1
-  momentum: 0.95
-  weight_decay: 0.001
+  lr0: 0.0001  # Lower learning rate for fine-tuning
+  lrf: 0.01
+  momentum: 0.937
+  weight_decay: 0.0005  # Lower weight decay for fine-tuning
   
-  # Advanced loss weights
-  box: 10.0
-  cls: 0.3
-  dfl: 2.0
+  # Fine-tuning loss weights
+  box: 7.5
+  cls: 0.5
+  dfl: 1.5
   
-  # Advanced learning rate scheduling
+  # Fine-tuning learning rate scheduling
   lr_scheduler: 'cosine_annealing_warm_restarts'
   lr_scheduler_params:
     T_0: 10
     T_mult: 2
     eta_min: 0.00001
 
-# Advanced Data Augmentation with Curriculum Learning
+# Fine-tuning Data Augmentation (less aggressive)
 augmentation:
   # HSV augmentation
   hsv_h: 0.015
   hsv_s: 0.7
   hsv_v: 0.4
   
-  # Geometric augmentation
-  degrees: 0.373
-  translate: 0.245
-  scale: 0.898
-  shear: 0.602
-  perspective: 0.0
-  flipud: 0.00856
-  fliplr: 0.5
+  # Geometric augmentation (minimal for fine-tuning)
+  degrees: 0.0  # No rotation for fine-tuning
+  translate: 0.1  # Minimal translation
+  scale: 0.5  # Minimal scaling
+  shear: 0.0  # No shearing
+  perspective: 0.0  # No perspective
+  flipud: 0.0  # No vertical flip
+  fliplr: 0.5  # Keep horizontal flip
   
-  # Advanced augmentation
-  mosaic: 1.0
-  mixup: 0.243
-  copy_paste: 0.362
+  # Fine-tuning augmentation (less aggressive)
+  mosaic: 0.0  # No mosaic for fine-tuning
+  mixup: 0.0  # No mixup for fine-tuning
+  copy_paste: 0.0  # No copy-paste for fine-tuning
   
-  # Advanced augmentations for better generalization
+  # Advanced augmentations for fine-tuning
   random_resized_crop:
-    enabled: true
+    enabled: false  # Disabled for fine-tuning
     scale: [0.8, 1.0]
     ratio: [0.8, 1.2]
     p: 0.8
   
   color_augmentation:
-    brightness_contrast: [0.3, 0.3]
-    gamma: [80, 120]
+    brightness_contrast: [0.1, 0.1]  # Reduced for fine-tuning
+    gamma: [90, 110]  # Reduced for fine-tuning
     clahe: [2.0, 8, 8]
-    hue_saturation: [20, 30, 20]
-    rgb_shift: [20, 20, 20]
-    channel_shuffle: true
+    hue_saturation: [10, 15, 10]  # Reduced for fine-tuning
+    rgb_shift: [10, 10, 10]  # Reduced for fine-tuning
+    channel_shuffle: false  # Disabled for fine-tuning
   
   noise_blur:
-    gauss_noise: [10.0, 50.0]
-    gaussian_blur: [3, 7]
-    motion_blur: 7
-    median_blur: 5
+    gauss_noise: [5.0, 25.0]  # Reduced for fine-tuning
+    gaussian_blur: [3, 5]  # Reduced for fine-tuning
+    motion_blur: 5  # Reduced for fine-tuning
+    median_blur: 3  # Reduced for fine-tuning
   
   weather_effects:
-    random_rain: [-10, 10, 20, 1, 200]
-    random_fog: [0.1, 0.3]
-    random_sunflare: [0, 0, 1, 0.5, 0, 1]
+    random_rain: [0, 0, 0, 0, 0]  # Disabled for fine-tuning
+    random_fog: [0, 0]  # Disabled for fine-tuning
+    random_sunflare: [0, 0, 0, 0, 0, 0]  # Disabled for fine-tuning
   
   advanced_augmentation:
-    coarse_dropout: [8, 32, 32, 1]
-    grid_distortion: [5, 0.3]
-    optical_distortion: [0.2, 0.15]
+    coarse_dropout: [0, 0, 0, 0]  # Disabled for fine-tuning
+    grid_distortion: [0, 0]  # Disabled for fine-tuning
+    optical_distortion: [0, 0]  # Disabled for fine-tuning
   
-  # Curriculum Learning Stages
+  # Curriculum Learning Stages (simplified for fine-tuning)
   curriculum_learning:
-    enabled: true
+    enabled: false  # Disabled for fine-tuning
     stages:
       - epochs: 50
         difficulty: 'easy'

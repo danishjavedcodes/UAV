@@ -502,17 +502,36 @@ class EnhancedYOLOBackbone(nn.Module):
         return detection_outputs
 
 class HMAY_TSF(nn.Module):
-    """Enhanced Hybrid Multi-Scale Adaptive YOLO with Temporal-Spatial Fusion"""
-    def __init__(self, model_size='s', num_classes=11, pretrained=True):
+    """Enhanced Hybrid Multi-Scale Adaptive YOLO with Temporal-Spatial Fusion - YOLOv11 Version"""
+    def __init__(self, model_size='s', num_classes=11, pretrained=True, use_yolov11=True):
         super().__init__()
         
-        # Load base YOLOv8 model
-        self.base_yolo = YOLO(f'yolov8{model_size}.pt' if pretrained else f'yolov8{model_size}.yaml')
+        # Load base YOLO model (YOLOv11 or YOLOv8)
+        if use_yolov11:
+            try:
+                # Try to load YOLOv11
+                model_name = f'yolov11{model_size}.pt' if pretrained else f'yolov11{model_size}.yaml'
+                self.base_yolo = YOLO(model_name)
+                print(f"✅ YOLOv11 model {model_name} loaded successfully!")
+            except Exception as e:
+                print(f"❌ Error loading YOLOv11: {e}")
+                print("Falling back to YOLOv8...")
+                model_name = f'yolov8{model_size}.pt' if pretrained else f'yolov8{model_size}.yaml'
+                self.base_yolo = YOLO(model_name)
+                use_yolov11 = False
+        else:
+            # Use YOLOv8
+            model_name = f'yolov8{model_size}.pt' if pretrained else f'yolov8{model_size}.yaml'
+            self.base_yolo = YOLO(model_name)
         
         # Replace backbone with enhanced version
         self.enhanced_backbone = EnhancedYOLOBackbone(self.base_yolo.model, num_classes)
         
-        # Enhanced loss function weights
+        # Fine-tuning approach: Only train extra layers, freeze YOLO weights
+        if pretrained:
+            self._setup_fine_tuning()
+        
+        # Enhanced loss function weights for fine-tuning
         self.box_loss_weight = 7.5
         self.cls_loss_weight = 0.5
         self.dfl_loss_weight = 1.5
@@ -523,6 +542,35 @@ class HMAY_TSF(nn.Module):
         
         # Initialize weights
         self._initialize_weights()
+        
+    def _setup_fine_tuning(self):
+        """Setup fine-tuning: freeze YOLO weights, train extra layers"""
+        print("🔒 Setting up fine-tuning strategy...")
+        
+        # Freeze YOLO backbone parameters
+        for name, param in self.base_yolo.model.named_parameters():
+            if 'model.' in name and not any(x in name for x in ['model.22', 'model.23', 'model.24']):  # Freeze backbone, keep detection head
+                param.requires_grad = False
+                print(f"  Frozen: {name}")
+            else:
+                param.requires_grad = True
+                print(f"  Trainable: {name}")
+        
+        # Make sure extra layers are trainable
+        for name, param in self.enhanced_backbone.named_parameters():
+            param.requires_grad = True
+            print(f"  Extra trainable: {name}")
+        
+        # Count parameters
+        frozen_params = sum(p.numel() for p in self.base_yolo.parameters() if not p.requires_grad)
+        trainable_params = sum(p.numel() for p in self.base_yolo.parameters() if p.requires_grad)
+        extra_params = sum(p.numel() for p in self.enhanced_backbone.parameters())
+        
+        print(f"\nFine-tuning Summary:")
+        print(f"  Frozen YOLO parameters: {frozen_params:,}")
+        print(f"  Trainable YOLO parameters: {trainable_params:,}")
+        print(f"  Extra trainable parameters: {extra_params:,}")
+        print(f"  Total trainable: {trainable_params + extra_params:,}")
         
     def _initialize_weights(self):
         """Initialize weights for better training"""
@@ -598,7 +646,7 @@ class HMAY_TSF(nn.Module):
         return predictions
     
     def train_model(self, data_config, epochs=100, **kwargs):
-        """Enhanced training method"""
+        """Enhanced training method with fine-tuning"""
         # This would integrate with the training script
         pass
 
@@ -608,9 +656,9 @@ def prepare_visdrone_dataset():
     pass
 
 if __name__ == "__main__":
-    # Test model creation
-    model = HMAY_TSF(model_size='s', num_classes=11)
-    print("Enhanced HMAY-TSF model created successfully!")
+    # Test model creation with YOLOv11
+    model = HMAY_TSF(model_size='s', num_classes=11, use_yolov11=True)
+    print("Enhanced HMAY-TSF model with YOLOv11 created successfully!")
     
     # Test forward pass
     dummy_input = torch.randn(1, 3, 640, 640)
