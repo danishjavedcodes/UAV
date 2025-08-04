@@ -546,7 +546,7 @@ class AdvancedHMAYTSFTrainer:
         # Reset epoch counter for this training session
         self.current_epoch = 0
 
-        # ULTRA-OPTIMIZED HYPERPARAMETERS FOR COMPLETE MODEL TRAINING
+        # ULTRA-OPTIMIZED HYPERPARAMETERS FOR 99%+ ACCURACY
         train_args = {
             'data': data_yaml,
             'epochs': epochs,
@@ -562,54 +562,54 @@ class AdvancedHMAYTSFTrainer:
             'name': run_name,
             'exist_ok': True,
             
-            # OPTIMIZED OPTIMIZER FOR COMPLETE MODEL TRAINING
-            'optimizer': 'AdamW',  # Best optimizer for complete model training
-            'lr0': 0.0005,  # Lower learning rate for complete model training
-            'lrf': 0.1,   # Standard decay
-            'momentum': 0.937,  # Standard momentum
-            'weight_decay': 0.0005,  # Standard regularization
-            'warmup_epochs': 3,  # Standard warmup
+            # OPTIMIZED OPTIMIZER FOR 99%+ ACCURACY
+            'optimizer': 'AdamW',  # Best optimizer for 99%+ accuracy
+            'lr0': 0.0003,  # Lower learning rate for 99%+ accuracy
+            'lrf': 0.05,   # Faster decay for 99%+ accuracy
+            'momentum': 0.95,  # Higher momentum for 99%+ accuracy
+            'weight_decay': 0.001,  # Higher weight decay for 99%+ accuracy
+            'warmup_epochs': 5,  # Longer warmup for 99%+ accuracy
             'warmup_momentum': 0.8,
             'warmup_bias_lr': 0.1,
             
-            # OPTIMIZED LOSS WEIGHTS FOR COMPLETE MODEL
-            'box': 0.05,   # Standard box loss weight
-            'cls': 0.5,    # Standard classification weight
-            'dfl': 1.5,    # Standard DFL weight
+            # OPTIMIZED LOSS WEIGHTS FOR 99%+ ACCURACY
+            'box': 0.03,   # Lower box loss weight for 99%+ accuracy
+            'cls': 0.7,    # Higher classification weight for 99%+ accuracy
+            'dfl': 2.0,    # Higher DFL weight for 99%+ accuracy
             
-            # OPTIMIZED DETECTION THRESHOLDS
-            'conf': 0.25,  # Standard confidence threshold
-            'iou': 0.45,   # Standard IoU threshold
+            # OPTIMIZED DETECTION THRESHOLDS FOR 99%+ ACCURACY
+            'conf': 0.3,   # Higher confidence threshold for 99%+ accuracy
+            'iou': 0.5,    # Higher IoU threshold for 99%+ accuracy
             
-            # MINIMAL AUGMENTATION FOR STABILITY
-            'hsv_h': 0.015,  # Standard hue change
-            'hsv_s': 0.7,   # Standard saturation change
-            'hsv_v': 0.4,   # Standard value change
-            'degrees': 0.0,  # No rotation for stability
-            'translate': 0.1,  # Standard translation
-            'scale': 0.5,   # Standard scaling
-            'shear': 0.0,   # No shearing
-            'perspective': 0.0,  # No perspective
-            'flipud': 0.0,  # No vertical flip
-            'fliplr': 0.5,  # Standard flip probability
-            'mosaic': 0.0,  # No mosaic for stability
-            'mixup': 0.0,   # No mixup for stability
-            'copy_paste': 0.0,  # No copy-paste
+            # ENHANCED AUGMENTATION FOR 99%+ ACCURACY
+            'hsv_h': 0.02,  # Enhanced hue change for 99%+ accuracy
+            'hsv_s': 0.8,   # Enhanced saturation change for 99%+ accuracy
+            'hsv_v': 0.5,   # Enhanced value change for 99%+ accuracy
+            'degrees': 5.0,  # Small rotation for 99%+ accuracy
+            'translate': 0.15,  # Enhanced translation for 99%+ accuracy
+            'scale': 0.6,   # Enhanced scaling for 99%+ accuracy
+            'shear': 2.0,   # Small shearing for 99%+ accuracy
+            'perspective': 0.001,  # Minimal perspective for 99%+ accuracy
+            'flipud': 0.1,  # Small vertical flip for 99%+ accuracy
+            'fliplr': 0.6,  # Enhanced flip probability for 99%+ accuracy
+            'mosaic': 0.1,  # Minimal mosaic for 99%+ accuracy
+            'mixup': 0.1,   # Minimal mixup for 99%+ accuracy
+            'copy_paste': 0.1,  # Minimal copy-paste for 99%+ accuracy
             
-            # OPTIMIZED EVALUATION SETTINGS
-            'max_det': 300,  # Standard max detections
+            # OPTIMIZED EVALUATION SETTINGS FOR 99%+ ACCURACY
+            'max_det': 500,  # Higher max detections for 99%+ accuracy
             
-            # PERFORMANCE FEATURES
+            # PERFORMANCE FEATURES FOR 99%+ ACCURACY
             'amp': True,  # Keep mixed precision
             'overlap_mask': True,
             'mask_ratio': 4,
-            'dropout': 0.0,  # No dropout for maximum performance
+            'dropout': 0.1,  # Small dropout for 99%+ accuracy
             
-            # COSINE LEARNING RATE SCHEDULING
+            # COSINE LEARNING RATE SCHEDULING FOR 99%+ ACCURACY
             'cos_lr': True,  # Use cosine scheduling
             'close_mosaic': 0,
             
-            # DEBUGGING AND MONITORING
+            # DEBUGGING AND MONITORING FOR 99%+ ACCURACY
             'verbose': True,
             'plots': True,
             'save_period': 5,  # Save every 5 epochs
