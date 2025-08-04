@@ -24,8 +24,6 @@ import math
 from pathlib import Path
 from tqdm import tqdm
 
-# Import our custom model
-from hmay_tsf_model import UltraOptimizedHMAY_TSF
 
 class CustomDataset:
     """Custom dataset for training without YOLO"""
@@ -767,11 +765,20 @@ def main():
             temporal_features = temporal_features.squeeze(2)  # Remove time dimension
             
             # GRU processing (simplified for single frame)
-            gru_input = temporal_features.view(batch_size, -1).unsqueeze(1)
+            # Reshape to match GRU input size (128 features)
+            B, C, H, W = temporal_features.shape
+            gru_input = temporal_features.view(B, C, H * W).permute(0, 2, 1)  # [B, H*W, C]
+            
+            # Ensure input size matches GRU expected size (128)
+            if gru_input.size(-1) != 128:
+                # Add a linear layer to project to correct size
+                if not hasattr(self, 'gru_projection'):
+                    self.gru_projection = nn.Linear(gru_input.size(-1), 128).to(gru_input.device)
+                gru_input = self.gru_projection(gru_input)
+            
             gru_output, _ = self.gru(gru_input)
-            gru_features = gru_output.squeeze(1).view(batch_size, 256, 
-                                                     temporal_features.size(2), 
-                                                     temporal_features.size(3))
+            gru_features = gru_output.mean(dim=1)  # Average over sequence length
+            gru_features = gru_features.view(B, 256, H, W)  # Reshape back to spatial
             
             # Spatial-temporal fusion
             spatial_temporal = torch.cat([bifpn_features[-1], gru_features], dim=1)
@@ -785,11 +792,19 @@ def main():
             attended_features = sr_features * attention_weights
             
             # LSTM for occlusion handling (simplified)
-            lstm_input = attended_features.view(batch_size, -1, 512)
+            B, C, H, W = attended_features.shape
+            lstm_input = attended_features.view(B, C, H * W).permute(0, 2, 1)  # [B, H*W, C]
+            
+            # Ensure input size matches LSTM expected size (512)
+            if lstm_input.size(-1) != 512:
+                # Add a linear layer to project to correct size
+                if not hasattr(self, 'lstm_projection'):
+                    self.lstm_projection = nn.Linear(lstm_input.size(-1), 512).to(lstm_input.device)
+                lstm_input = self.lstm_projection(lstm_input)
+            
             lstm_output, _ = self.occlusion_lstm(lstm_input)
-            lstm_features = lstm_output.view(batch_size, 512, 
-                                           attended_features.size(2), 
-                                           attended_features.size(3))
+            lstm_features = lstm_output.mean(dim=1)  # Average over sequence length
+            lstm_features = lstm_features.view(B, 512, H, W)  # Reshape back to spatial
             
             # Occlusion fusion
             occlusion_fused = torch.cat([attended_features, lstm_features], dim=1)
