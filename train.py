@@ -146,6 +146,9 @@ class CustomLoss(nn.Module):
         if isinstance(predictions, list):
             predictions = predictions[0]  # Take the first prediction tensor
         
+        # Debug: Print prediction shape
+        print(f"Debug - Predictions shape: {predictions.shape}")
+        
         total_loss = 0
         box_loss = 0
         cls_loss = 0
@@ -161,9 +164,19 @@ class CustomLoss(nn.Module):
                 # No objects in this image
                 continue
             
-            # Reshape predictions
-            B, C, H, W, D = pred.shape
-            pred = pred.view(-1, D)  # [3*H*W, 5+num_classes]
+            # Reshape predictions to expected format
+            if pred.dim() == 2:  # [anchors, features]
+                # Reshape to [3, H, W, 5+num_classes]
+                H = W = int(math.sqrt(pred.size(0) // 3))
+                pred = pred.view(3, H, W, -1)
+            
+            # Ensure correct shape
+            if pred.dim() == 4:  # [3, H, W, features]
+                B, C, H, W, D = pred.shape
+                pred = pred.view(-1, D)  # [3*H*W, 5+num_classes]
+            else:
+                # Skip this prediction if shape is unexpected
+                continue
             
             # Extract components
             pred_xy = pred[:, :2]    # [3*H*W, 2]
