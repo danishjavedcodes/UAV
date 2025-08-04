@@ -404,7 +404,7 @@ class AdvancedHMAYTSFTrainer:
         print("Setting up Advanced HMAY-TSF model with YOLOv11...")
         
         # Use YOLOv11 instead of YOLOv8
-        model_name = f'yolov11{self.model_size}.pt' if pretrained else f'yolov11{self.model_size}.yaml'
+        model_name = f'yolov11n.pt' if pretrained else f'yolov11n.yaml'
         
         try:
             # Load YOLOv11 model
@@ -413,7 +413,7 @@ class AdvancedHMAYTSFTrainer:
         except Exception as e:
             print(f"❌ Error loading YOLOv11 model: {e}")
             print("Falling back to YOLOv8...")
-            model_name = f'yolov8{self.model_size}.pt' if pretrained else f'yolov8{self.model_size}.yaml'
+            model_name = f'yolov8n.pt' if pretrained else f'yolov8n.yaml'
             self.model = YOLO(model_name)
         
         # Advanced model configuration
@@ -546,7 +546,7 @@ class AdvancedHMAYTSFTrainer:
         print(f"  Device: {self.device}")
         
         # Create save directory and setup CSV logging
-        run_name = f'advanced_hmay_tsf_{self.model_size}_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
+        run_name = f'advanced_hmay_tsf_n_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
         full_save_dir = Path(save_dir) / run_name
         full_save_dir.mkdir(parents=True, exist_ok=True)
         
@@ -829,7 +829,7 @@ class AdvancedHMAYTSFTrainer:
         summary_path = Path(save_dir) / 'advanced_training_summary.json'
         
         summary = {
-            'model_size': self.model_size,
+            'model_size': 'n',
             'device': self.device,
             'best_metrics': self.best_metrics,
             'training_metrics': self.training_metrics[-10:],  # Last 10 epochs
@@ -906,7 +906,7 @@ def main():
     
     # Initialize advanced trainer
     trainer = AdvancedHMAYTSFTrainer(
-        model_size=args.model_size,
+        model_size='n',
         device=args.device,
         project_name='HMAY-TSF-Advanced-99.2-Percent'
     )
