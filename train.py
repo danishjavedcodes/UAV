@@ -239,6 +239,27 @@ class SimpleHMAYTSF(nn.Module):
         B, C, H, W = output.shape
         output = output.view(B, C, H * W).permute(0, 2, 1)  # [B, H*W, C]
         
+        # Apply proper activations to different components
+        num_features_per_anchor = 5 + self.num_classes
+        if output.size(2) == 3 * num_features_per_anchor:
+            # Reshape to separate anchors
+            output = output.view(B, -1, 3, num_features_per_anchor)
+            
+            # Apply activations
+            # Box coordinates: no activation (can be any value)
+            # Objectness: sigmoid activation
+            # Class probabilities: softmax activation
+            box_coords = output[:, :, :, :4]  # [x, y, w, h]
+            obj_scores = torch.sigmoid(output[:, :, :, 4])  # objectness
+            cls_logits = output[:, :, :, 5:5+self.num_classes]  # class logits
+            
+            # Apply softmax to class logits
+            cls_probs = torch.softmax(cls_logits, dim=-1)
+            
+            # Combine back
+            output = torch.cat([box_coords, obj_scores.unsqueeze(-1), cls_probs], dim=-1)
+            output = output.view(B, -1, 3 * num_features_per_anchor)
+        
         return output
 
 class MetricsCalculator:
@@ -247,8 +268,36 @@ class MetricsCalculator:
     def __init__(self, num_classes=4):
         self.num_classes = num_classes
     
+    def calculate_iou(self, box1, box2):
+        """Calculate IoU between two boxes [x_center, y_center, width, height]"""
+        # Convert to [x1, y1, x2, y2]
+        box1_x1 = box1[0] - box1[2] / 2
+        box1_y1 = box1[1] - box1[3] / 2
+        box1_x2 = box1[0] + box1[2] / 2
+        box1_y2 = box1[1] + box1[3] / 2
+        
+        box2_x1 = box2[0] - box2[2] / 2
+        box2_y1 = box2[1] - box2[3] / 2
+        box2_x2 = box2[0] + box2[2] / 2
+        box2_y2 = box2[1] + box2[3] / 2
+        
+        # Calculate intersection
+        x1 = max(box1_x1, box2_x1)
+        y1 = max(box1_y1, box2_y1)
+        x2 = min(box1_x2, box2_x2)
+        y2 = min(box1_y2, box2_y2)
+        
+        intersection = max(0, x2 - x1) * max(0, y2 - y1)
+        
+        # Calculate union
+        area1 = (box1_x2 - box1_x1) * (box1_y2 - box1_y1)
+        area2 = (box2_x2 - box2_x1) * (box2_y2 - box2_y1)
+        union = area1 + area2 - intersection
+        
+        return intersection / union if union > 0 else 0
+    
     def calculate_metrics(self, predictions, targets):
-        """Calculate accuracy, precision, recall, F1 score"""
+        """Calculate accuracy, precision, recall, F1 score for object detection"""
         all_preds = []
         all_targets = []
         
@@ -259,7 +308,6 @@ class MetricsCalculator:
             target = targets[i]    # [num_objects, 5]
             
             # Model output format: [anchors, 27] where 27 = 3 * (5 + 4)
-            # Each anchor has 3 sub-anchors with format: [x, y, w, h, obj_conf, class_probs...]
             if pred.size(0) > 0 and pred.size(1) == 27:  # 3 * (5 + 4)
                 # Reshape to separate the 3 anchors
                 num_features_per_anchor = 5 + self.num_classes  # 9
@@ -268,20 +316,19 @@ class MetricsCalculator:
                 # Flatten to get all anchors
                 all_anchors = pred_reshaped.reshape(-1, num_features_per_anchor)  # [total_anchors, 9]
                 
-                # Extract class probabilities (last num_classes dimensions)
-                class_probs = all_anchors[:, 5:5+self.num_classes]  # [total_anchors, 4]
+                # Extract different components
+                box_preds = all_anchors[:, :4]  # [x, y, w, h]
+                obj_preds = all_anchors[:, 4]   # objectness
+                cls_preds = all_anchors[:, 5:5+self.num_classes]  # class probabilities
                 
                 # Get predicted classes (argmax of class probabilities)
-                pred_classes = torch.argmax(class_probs, dim=1)  # [total_anchors]
+                pred_classes = torch.argmax(cls_preds, dim=1)  # [total_anchors]
                 
-                # Get objectness scores (4th dimension)
-                obj_scores = all_anchors[:, 4]  # [total_anchors]
-                
-                # Filter predictions with high objectness (> 0.3 for more lenient threshold)
-                valid_mask = obj_scores > 0.3
+                # Filter predictions with high objectness (> 0.1 for more lenient threshold)
+                valid_mask = obj_preds > 0.1
                 if valid_mask.sum() > 0:
-                    valid_preds = pred_classes[valid_mask]
-                    all_preds.extend(valid_preds.cpu().numpy())
+                    valid_classes = pred_classes[valid_mask]
+                    all_preds.extend(valid_classes.cpu().numpy())
             
             # Extract target classes
             if len(target) > 0:
