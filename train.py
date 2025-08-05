@@ -135,8 +135,10 @@ class SimpleLoss(nn.Module):
         predictions: [batch, anchors, features]
         targets: list of [num_objects, 5] tensors
         """
-        # Simple MSE loss for demonstration
         total_loss = 0
+        box_loss = 0
+        cls_loss = 0
+        obj_loss = 0
         batch_size = predictions.size(0)
         
         for i in range(batch_size):
@@ -146,12 +148,39 @@ class SimpleLoss(nn.Module):
             if len(target) == 0:
                 # No objects in this image - use dummy loss
                 total_loss += torch.mean(pred ** 2) * 0.1
+                box_loss += torch.mean(pred ** 2) * 0.1
+                cls_loss += torch.mean(pred ** 2) * 0.1
+                obj_loss += torch.mean(pred ** 2) * 0.1
                 continue
             
-            # Simple loss: minimize prediction variance
-            total_loss += torch.mean(pred ** 2)
+            # Model output format: [anchors, 27] where 27 = 3 * (5 + 4)
+            num_features_per_anchor = 5 + self.num_classes  # 9
+            if pred.size(1) == 27:  # 3 * (5 + 4)
+                # Reshape to separate the 3 anchors
+                pred_reshaped = pred.reshape(-1, 3, num_features_per_anchor)  # [anchors, 3, 9]
+                
+                # Flatten to get all anchors
+                all_anchors = pred_reshaped.reshape(-1, num_features_per_anchor)  # [total_anchors, 9]
+                
+                # Extract different components
+                box_preds = all_anchors[:, :4]  # [x, y, w, h]
+                obj_preds = all_anchors[:, 4]   # objectness
+                cls_preds = all_anchors[:, 5:5+self.num_classes]  # class probabilities
+                
+                # Simple losses
+                box_loss += torch.mean(box_preds ** 2)  # Box regression loss
+                obj_loss += torch.mean(obj_preds ** 2)  # Objectness loss
+                cls_loss += torch.mean(cls_preds ** 2)  # Classification loss
+                
+                total_loss += box_loss + obj_loss + cls_loss
+            else:
+                # Fallback for unexpected format
+                total_loss += torch.mean(pred ** 2)
+                box_loss += torch.mean(pred ** 2)
+                cls_loss += torch.mean(pred ** 2)
+                obj_loss += torch.mean(pred ** 2)
         
-        return total_loss, total_loss, total_loss, total_loss
+        return total_loss, box_loss, cls_loss, obj_loss
 
 class SimpleHMAYTSF(nn.Module):
     """Simple HMAY-TSF model for robust training"""
@@ -229,20 +258,27 @@ class MetricsCalculator:
             pred = predictions[i]  # [anchors, features]
             target = targets[i]    # [num_objects, 5]
             
-            # Extract class predictions from model output
-            # Model output format: [anchors, 5 + num_classes] where 5 = [x, y, w, h, obj_conf]
-            if pred.size(0) > 0 and pred.size(1) >= 5 + self.num_classes:
-                # Get class probabilities (last num_classes dimensions)
-                class_probs = pred[:, 5:5+self.num_classes]  # [anchors, num_classes]
+            # Model output format: [anchors, 27] where 27 = 3 * (5 + 4)
+            # Each anchor has 3 sub-anchors with format: [x, y, w, h, obj_conf, class_probs...]
+            if pred.size(0) > 0 and pred.size(1) == 27:  # 3 * (5 + 4)
+                # Reshape to separate the 3 anchors
+                num_features_per_anchor = 5 + self.num_classes  # 9
+                pred_reshaped = pred.reshape(-1, 3, num_features_per_anchor)  # [anchors, 3, 9]
+                
+                # Flatten to get all anchors
+                all_anchors = pred_reshaped.reshape(-1, num_features_per_anchor)  # [total_anchors, 9]
+                
+                # Extract class probabilities (last num_classes dimensions)
+                class_probs = all_anchors[:, 5:5+self.num_classes]  # [total_anchors, 4]
                 
                 # Get predicted classes (argmax of class probabilities)
-                pred_classes = torch.argmax(class_probs, dim=1)  # [anchors]
+                pred_classes = torch.argmax(class_probs, dim=1)  # [total_anchors]
                 
                 # Get objectness scores (4th dimension)
-                obj_scores = pred[:, 4]  # [anchors]
+                obj_scores = all_anchors[:, 4]  # [total_anchors]
                 
-                # Filter predictions with high objectness (> 0.5)
-                valid_mask = obj_scores > 0.5
+                # Filter predictions with high objectness (> 0.3 for more lenient threshold)
+                valid_mask = obj_scores > 0.3
                 if valid_mask.sum() > 0:
                     valid_preds = pred_classes[valid_mask]
                     all_preds.extend(valid_preds.cpu().numpy())
