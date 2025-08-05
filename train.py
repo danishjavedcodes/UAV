@@ -324,13 +324,44 @@ class MetricsCalculator:
                 # Get predicted classes (argmax of class probabilities)
                 pred_classes = torch.argmax(cls_preds, dim=1)  # [total_anchors]
                 
-                # Filter predictions with high objectness (> 0.1 for more lenient threshold)
-                valid_mask = obj_preds > 0.1
+                # Filter predictions with high objectness (> 0.3)
+                valid_mask = obj_preds > 0.3
                 if valid_mask.sum() > 0:
+                    valid_boxes = box_preds[valid_mask]
                     valid_classes = pred_classes[valid_mask]
-                    all_preds.extend(valid_classes.cpu().numpy())
+                    valid_scores = obj_preds[valid_mask]
+                    
+                    # Sort by confidence (objectness score)
+                    sorted_indices = torch.argsort(valid_scores, descending=True)
+                    valid_boxes = valid_boxes[sorted_indices]
+                    valid_classes = valid_classes[sorted_indices]
+                    valid_scores = valid_scores[sorted_indices]
+                    
+                    # For each target, find the best matching prediction
+                    matched_targets = set()
+                    for target_obj in target:
+                        target_box = target_obj[1:5]  # [x_center, y_center, width, height]
+                        target_class = int(target_obj[0])  # class_id is first column
+                        
+                        # Find best IoU match
+                        best_iou = 0
+                        best_pred_idx = -1
+                        
+                        for j, pred_box in enumerate(valid_boxes):
+                            if j in matched_targets:
+                                continue  # Skip already matched predictions
+                            
+                            iou = self.calculate_iou(target_box, pred_box)
+                            if iou > best_iou and iou > 0.5:  # IoU threshold
+                                best_iou = iou
+                                best_pred_idx = j
+                        
+                        if best_pred_idx >= 0:
+                            all_preds.append(valid_classes[best_pred_idx].item())
+                            all_targets.append(target_class)
+                            matched_targets.add(best_pred_idx)
             
-            # Extract target classes
+            # Also add simple class predictions for targets without good matches
             if len(target) > 0:
                 target_classes = target[:, 0].long()  # First column is class_id
                 all_targets.extend(target_classes.cpu().numpy())
